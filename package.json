@@ -1,0 +1,54 @@
+{
+  "name": "moyu-browser",
+  "productName": "沫鱼",
+  "version": "1.6.0",
+  "private": true,
+  "description": "沫鱼（MoYu）· 忙里冒个泡的桌面小窗浏览器与阅读器",
+  "homepage": "https://github.com/luabuCN/MoYu#readme",
+  "repository": {"type": "git", "url": "https://github.com/luabuCN/MoYu.git"},
+  "author": "MoYu contributors",
+  "license": "Apache-2.0",
+  "main": "main.cjs",
+  "engines": {"node": ">=22.12.0"},
+  "scripts": {
+    "postinstall": "install-electron",
+    "dev": "npm run icons && node scripts/build-native.cjs && node scripts/dev.mjs",
+    "dev:preview": "vite --host 127.0.0.1 --port 5186 --strictPort",
+    "icons": "node scripts/build-icons.cjs",
+    "build": "npm run icons && node scripts/build-native.cjs && node scripts/build-notices.cjs && vite build",
+    "start": "npm run build && electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:integration": "npm run build && electron . --smoke-test",
+    "preview": "electron .",
+    "package": "npm run build && node scripts/package.cjs",
+    "package:update": "npm run build && node scripts/package.cjs --update",
+    "dist:win": "npm run build && electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never",
+    "dist:mac": "npm run build && electron-builder --config electron-builder.config.cjs --mac dmg --arm64 --x64 --publish never",
+    "submit": "node scripts/submit.cjs"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.8.15",
+    "cheerio": "1.2.0",
+    "dompurify": "3.3.1",
+    "epubjs": "0.3.93",
+    "iconv-lite": "0.7.3",
+    "json5": "2.2.3",
+    "jsonpath-plus": "10.3.0",
+    "jszip": "3.10.1",
+    "quickjs-emscripten": "0.32.0",
+    "reka-ui": "2.11.0",
+    "vue": "3.5.44",
+    "xpath": "0.0.35"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.8.15"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "@vitejs/plugin-vue": "6.0.10",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
+    "rcedit": "5.0.2",
+    "vite": "8.3.5"
+  }
+}

@@ -1,0 +1,16 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const {execFileSync} = require('node:child_process');
+if (process.platform !== 'win32') process.exit(0);
+const project = path.resolve(__dirname, '..');
+const source = path.join(project, 'native', 'OutsideClickMonitor.cs');
+const output = path.join(project, 'native', 'outside-click-monitor.exe');
+if (fs.existsSync(output) && fs.statSync(output).mtimeMs >= fs.statSync(source).mtimeMs) process.exit(0);
+const windows = process.env.WINDIR || 'C:\\Windows';
+const compiler = ['Framework64', 'Framework'].map(name => path.join(windows, 'Microsoft.NET', name, 'v4.0.30319', 'csc.exe')).find(file => fs.existsSync(file));
+if (!compiler) throw new Error('需要 Windows .NET Framework C# 编译器来构建外部点击监听组件');
+const staged = path.join(project, 'native', 'outside-click-monitor.next.exe');
+execFileSync(compiler, ['/nologo', '/target:exe', '/platform:x64', '/optimize+', `/out:${staged}`, source], {windowsHide: true, stdio: 'pipe'});
+fs.renameSync(staged, output);
+console.log('已构建 Windows 外部点击监听组件');

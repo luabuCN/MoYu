@@ -1,0 +1,15 @@
+{
+  "bindings": [
+    {"id":"previousPage","label":"上一页","key":"ArrowLeft","group":"翻页与章节"},
+    {"id":"nextPage","label":"下一页","key":"ArrowRight","group":"翻页与章节"},
+    {"id":"previousChapter","label":"上一章","key":"Ctrl+ArrowLeft","group":"翻页与章节"},
+    {"id":"nextChapter","label":"下一章","key":"Ctrl+ArrowRight","group":"翻页与章节"},
+    {"id":"scrollUp","label":"向上滚动","key":"ArrowUp","group":"上下滚动"},
+    {"id":"scrollDown","label":"向下滚动","key":"ArrowDown","group":"上下滚动"},
+    {"id":"toggleTransparent","label":"切换透明阅读","key":"Ctrl+Shift+T","group":"阅读界面"},
+    {"id":"openSettings","label":"打开阅读设置","key":"Ctrl+Comma","group":"阅读界面"}
+  ],
+  "modifiers":["Ctrl","Alt","Shift","Meta"],
+  "keys":["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","PageUp","PageDown","Home","End","Space","Comma","Period","Minus","Equal","BracketLeft","BracketRight","Semicolon","Quote","Slash","Backslash","Backquote","F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"],
+  "reserved":["F5","F11","Alt+F4","Alt+Space","Ctrl+Shift+Space","Ctrl+L","Ctrl+W","Ctrl+H","Ctrl+R","Ctrl+D","Ctrl+F","Ctrl+A","Ctrl+C","Ctrl+X","Ctrl+V","Ctrl+Z","Meta+L","Meta+W","Meta+H","Meta+R","Meta+D","Meta+F","Meta+A","Meta+C","Meta+X","Meta+V","Meta+Z"]
+}

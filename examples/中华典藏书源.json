@@ -1,0 +1,26 @@
+{
+  "name": "中华典藏 · 古典小说与名著",
+  "baseUrl": "https://www.diancang.xyz/",
+  "search": {
+    "url": "/e/search/index.php",
+    "method": "POST",
+    "query": {
+      "tbname": "bookname",
+      "show": "title,writer",
+      "tempid": "1",
+      "keyboard": { "type": "query" }
+    },
+    "list": "table.table tr:has(td:first-child > a)",
+    "name": "td:first-child a@text",
+    "author": "a[href*='/renwu/']@text",
+    "bookUrl": "td:first-child a@href"
+  },
+  "toc": {
+    "list": "#booklist li a",
+    "name": "@text",
+    "chapterUrl": "@href"
+  },
+  "content": {
+    "text": "#content@text"
+  }
+}

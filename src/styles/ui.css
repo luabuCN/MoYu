@@ -1,0 +1,48 @@
+/* Reka UI primitives: one visual language for pointer and keyboard use. */
+:root { --control-radius: 9px; --control-height: 38px; }
+button, input, select { -webkit-tap-highlight-color: transparent; }
+button:active:not(:disabled) { filter: brightness(.96); }
+:focus-visible { outline: 2px solid var(--paper-accent, var(--accent)); outline-offset: 3px; }
+.titlebar { padding-inline: 9px; }
+.titlebar .icon-button[aria-current=page] { color: var(--accent); background: var(--accent-soft); }
+.titlebar .icon-button { transition: background .15s, color .15s; }
+.titlebar .title-spacer { letter-spacing: .6px; }
+.ui-select-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 13px; min-height: var(--control-height); min-width: 120px; max-width: 100%; padding: 8px 12px; border: 1px solid var(--paper-line, var(--line)); border-radius: var(--control-radius); background: var(--paper-bg, var(--surface)); color: var(--paper-text, var(--text)); font: 12px/1.5 'Segoe UI','Microsoft YaHei',sans-serif!important; text-align: left; cursor: pointer; }
+.ui-select-trigger>span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ui-select-trigger>svg { width: 15px; height: 15px; color: var(--paper-muted, var(--muted)); transition: transform .18s; }
+.ui-select-trigger[data-state=open] { border-color: var(--paper-accent, var(--accent)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--paper-accent, var(--accent)) 10%, transparent); }
+.ui-select-trigger[data-state=open]>svg { transform: rotate(180deg); }
+.ui-select-content { --select-bg: var(--surface-solid); --select-text: var(--text); --select-line: var(--line); --select-hover: var(--accent-soft); --select-accent: var(--accent); z-index: 100; overflow: hidden; min-width: var(--reka-select-trigger-width); max-width: calc(100vw - 24px); max-height: min(310px, var(--reka-select-content-available-height)); border: 1px solid var(--select-line); border-radius: 11px; padding: 5px; background: var(--select-bg); color: var(--select-text); box-shadow: 0 8px 30px #1a33271c, 0 2px 5px #1a332707; transform-origin: var(--reka-select-content-transform-origin); animation: menu-in .14s ease-out; }
+.ui-select-content[data-paper=dark] { --select-bg: #25312a; --select-text: #e4ede5; --select-line: #46584b; --select-hover: #344a3c; --select-accent: #a6d4b7; }
+.ui-select-content[data-paper=paper] { --select-bg: #faf7ef; --select-text: #3d382f; --select-line: #dcd6ca; --select-hover: #eae5da; --select-accent: #226653; }
+.ui-select-content[data-paper=green] { --select-bg: #e7efe4; --select-text: #2d4134; --select-line: #cbd8c8; --select-hover: #d7e4d4; --select-accent: #226653; }
+.ui-select-content[data-paper=light] { --select-bg: #fff; --select-text: #29352e; --select-line: #dce3dc; --select-hover: #edf3ec; --select-accent: #226653; }
+.ui-select-viewport { padding: 2px; }
+.ui-select-item { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 37px; padding: 8px 10px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer; user-select: none; }
+.ui-select-item[data-highlighted] { background: var(--select-hover); color: var(--select-accent); }
+.ui-select-item[data-state=checked] { color: var(--select-accent); font-weight: 600; }
+.ui-select-item[data-disabled] { opacity: .45; pointer-events: none; }
+.ui-select-item svg { width: 15px; height: 15px; }
+.ui-select-scroll { display: flex; justify-content: center; padding: 4px; color: var(--select-accent); }
+.ui-select-scroll svg { width: 14px; height: 14px; }
+.ui-slider { position: relative; display: flex; align-items: center; width: 100%; height: 30px; user-select: none; touch-action: none; cursor: pointer; }
+.ui-slider-track { position: relative; flex: 1; height: 5px; border-radius: 99px; background: var(--paper-line, var(--line)); }
+.ui-slider-range { position: absolute; height: 100%; border-radius: inherit; background: var(--paper-accent, var(--accent)); }
+.ui-slider-thumb { display: block; width: 17px; height: 17px; border: 2px solid var(--paper-accent, var(--accent)); border-radius: 50%; background: var(--paper-bg, var(--surface-solid)); box-shadow: 0 1px 4px #173d2920; cursor: grab; transition: box-shadow .16s; }
+.ui-slider-thumb:hover, .ui-slider-thumb:focus-visible { box-shadow: 0 0 0 5px color-mix(in srgb, var(--paper-accent, var(--accent)) 14%, transparent); }
+.ui-slider-thumb:active { cursor: grabbing; }
+.ui-scroll-area { position: relative; min-height: 0; overflow: hidden; }
+.ui-scroll-viewport { width: 100%; height: 100%; border-radius: inherit; }
+/* The shared web stylesheet must not re-enable native bars under Reka's bars. */
+[data-reka-scroll-area-viewport] { scrollbar-width: none!important; }
+[data-reka-scroll-area-viewport]::-webkit-scrollbar { display: none!important; width: 0!important; height: 0!important; }
+.ui-scrollbar { display: flex; width: 10px; padding: 2px; user-select: none; touch-action: none; }
+.ui-scroll-thumb { position: relative; flex: 1; border-radius: 99px; background: color-mix(in srgb, var(--paper-muted, var(--muted)) 48%, transparent); min-height: 28px; }
+.ui-scroll-thumb:hover { background: var(--paper-accent, var(--accent)); }
+.ui-scroll-thumb::before { content: ''; position: absolute; inset: 0 -4px; }
+.reader-drawer .ui-scroll-viewport:focus-visible { outline-offset: -3px; }
+.settings-card { border: 1px solid var(--line); background: var(--surface); border-radius: 14px; box-shadow: none; }
+.settings-panel .range-setting>div { min-width: 160px; gap: 15px; }
+.range-setting .ui-slider { flex: 1; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media(prefers-reduced-motion:reduce) { *, *::before, *::after { animation: none!important; transition: none!important; scroll-behavior: auto!important; } }

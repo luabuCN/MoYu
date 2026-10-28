@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>沫鱼 · MoYu</title>
+  <rect x="2" y="2" width="28" height="28" rx="8" fill="#116556"/>
+  <path d="M10 16 5.5 11.5v9L10 16c4.4 6.8 11.4 6.8 16 0-4.6-6.8-11.6-6.8-16 0Z" fill="#fff"/>
+  <circle cx="21" cy="14.5" r="1" fill="#116556"/>
+</svg>

@@ -1,0 +1,44 @@
+/* A single toolbar leaves the entire remaining window to the webpage. */
+.titlebar {
+  position: relative;
+  height: 38px;
+  padding: 0 6px;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.top-navigation {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+.titlebar .window-actions { gap: 2px; flex: none; }
+.titlebar .icon-button { width: 28px; height: 28px; padding: 5px; border-radius: 6px; }
+.titlebar .icon-button svg { width: 17px; height: 17px; }
+.titlebar .page-close { width: auto; gap: 5px; padding: 5px 7px; }
+.page-close-label { font-size: 11px; white-space: nowrap; }
+.titlebar .page-close:hover { color: var(--danger); }
+.titlebar .icon-button[aria-current=page] { background: var(--surface); color: var(--text); }
+.title-spacer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 8px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.title-spacer .brand-logo { width: 17px; height: 17px; flex: none; object-fit: contain; }
+.title-spacer>span { overflow: hidden; text-overflow: ellipsis; }
+#workspace, body:not([data-panel=web]) #workspace { inset: 38px 0 0; }
+.web-panel { padding: 0; }
+#loading-line { bottom: 0; left: 0; right: 0; height: 2px; }
+#toast { bottom: 15px; }
+@media (max-width: 640px) { .title-spacer { font-size: 0; gap: 0; } .title-spacer .brand-logo { display: none; } .page-close-label { display: none; } .titlebar .page-close { width: 28px; padding: 5px; } }
