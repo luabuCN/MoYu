@@ -3,11 +3,19 @@
   <h1>沫鱼 · MoYu</h1>
   <p><strong>忙里冒个泡。</strong></p>
   <p>把网页和故事装进一扇小窗，给自己留一点轻松的时间。</p>
-  <p><a href="https://github.com/luabuCN/MoYu/releases">下载安装包</a> · <a href="#功能介绍">功能介绍</a> · <a href="#开发与运行">开发运行</a> · <a href="docs/RELEASING.md">自动发布说明</a></p>
+  <p><a href="https://github.com/luabuCN/MoYu/releases">下载安装包</a> · <a href="#演示视频">演示视频</a> · <a href="#功能介绍">功能介绍</a> · <a href="#开发与运行">开发运行</a> · <a href="docs/RELEASING.md">自动发布说明</a></p>
   <p><a href="https://github.com/luabuCN/MoYu/actions/workflows/release.yml"><img src="https://github.com/luabuCN/MoYu/actions/workflows/release.yml/badge.svg" alt="构建与发布" /></a> <img src="https://img.shields.io/badge/Vue-3-42b883" alt="Vue 3" /> <img src="https://img.shields.io/badge/Electron-45-47848f" alt="Electron 45" /></p>
 </div>
 
 沫鱼与“摸鱼”谐音，像一条吐着泡泡的小鱼。它是一款 **桌面小窗浏览器 + TXT / EPUB 阅读器**：可以打开常用网站、收藏网页、继续上次阅读，也可以用托盘、透明度和快捷键管理小窗。
+
+## 演示视频
+
+约 1 分 33 秒，查看沫鱼的实际操作演示。
+
+https://github.com/user-attachments/assets/84499c37-b73b-4e0f-85e7-db9f31a0da2e
+
+[查看或下载 MP4 演示文件](docs/media/moyu-demo.mp4)
 
 ![沫鱼首页](docs/screenshots/home.png)
 

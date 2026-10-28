@@ -5,4 +5,5 @@
 *.vbs text eol=crlf
 *.png binary
 *.ico binary
+*.mp4 binary
 THIRD-PARTY-NOTICES.txt -whitespace
