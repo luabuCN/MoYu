@@ -2,7 +2,7 @@ node_modules/
 dist/
 renderer-dist/
 test-output/
-data/
+/data/
 *.log
 .codex-research/
 codex-research-obsolete/
