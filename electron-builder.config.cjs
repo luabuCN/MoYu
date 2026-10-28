@@ -1,5 +1,10 @@
 'use strict';
 const path = require('node:path');
+// Actions exposes missing optional secrets as empty strings. The macOS signer
+// otherwise interprets an empty CSC_LINK as the working directory of a .p12.
+for (const name of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'CSC_NAME', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
+  if (!process.env[name]?.trim()) delete process.env[name];
+}
 const signing = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
 const notarization = signing && Boolean(
   (process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID) ||
