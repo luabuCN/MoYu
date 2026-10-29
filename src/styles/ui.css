@@ -42,6 +42,12 @@ button:active:not(:disabled) { filter: brightness(.96); }
 .ui-scroll-thumb::before { content: ''; position: absolute; inset: 0 -4px; }
 .reader-drawer .ui-scroll-viewport:focus-visible { outline-offset: -3px; }
 .settings-card { border: 1px solid var(--line); background: var(--surface); border-radius: 14px; box-shadow: none; }
+.delay-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 82px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.delay-setting>div:first-child { min-width: 0; }
+.delay-input { display: flex; align-items: center; gap: 8px; flex: none; color: var(--muted); font-size: 12px; }
+.delay-input input { width: 90px; min-height: var(--control-height); padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--surface-solid); color: var(--text); font-variant-numeric: tabular-nums; }
+.delay-input input[aria-invalid=true] { border-color: var(--danger); }
+.settings-card .delay-error { margin-top: 4px; color: var(--danger); }
 .settings-panel .range-setting>div { min-width: 160px; gap: 15px; }
 .range-setting .ui-slider { flex: 1; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }

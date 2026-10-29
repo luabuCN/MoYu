@@ -10,6 +10,7 @@ exports.run = async ({record}) => {
   const entries = ['第一章 山谷', '第二章 灯火', '第三章 归途'].map(title => ({title}));
   const books = ['txt', 'online', 'epub'].map((type, i) => ({id: type, type, title: ['翻页测试', '在线测试', 'EPUB 测试'][i], author: '测试作者', addedAt: 3 - i, chapterCount: 3, marks: [], progress: {chapter: 0, fraction: 0, percent: 0}}));
   const preferences = {theme: 'green', fontSize: 20, lineHeight: 1.9, width: 720, font: 'serif', readingMode: 'scroll'};
+  const chapterRequests = [], failedChapters = new Set();
   const zip = new JSZip();
   zip.file('mimetype', 'application/epub+zip');
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
@@ -19,7 +20,9 @@ exports.run = async ({record}) => {
   const bytes = [...await zip.generateAsync({type: 'uint8array'})];
   const fixture = new BrowserWindow({show: false, transparent: true, backgroundColor: '#f5f7f6', width: 820, height: 720, webPreferences: {preload: path.join(__dirname, 'reader-layout-preload.cjs'), sandbox: true, contextIsolation: true, backgroundThrottling: false, offscreen: true}});
   fixture.webContents.setFrameRate(60);
-  const js = code => fixture.webContents.executeJavaScript(code, true);
+  const rendererMessages = [];
+  fixture.webContents.on('console-message', event => { rendererMessages.push(event.message); if (rendererMessages.length > 12) rendererMessages.shift(); });
+  const js = code => fixture.webContents.executeJavaScript(code, true).catch(error => { console.error('Reader script failed:', code); throw error; });
   const until = async (code, label) => {
     const end = Date.now() + 10000;
     while (Date.now() < end) {
@@ -50,7 +53,11 @@ exports.run = async ({record}) => {
     let result;
     if (name === 'state') result = {books, sources: [], preferences};
     else if (name === 'open') result = {book: books.find(b => b.id === value.id), toc: value.id === 'epub' ? [] : entries, bytes};
-    else if (name === 'chapter') result = {title: entries[value.index].title, text};
+    else if (name === 'chapter') {
+      chapterRequests.push(`${value.id}:${value.index}`);
+      if (failedChapters.has(`${value.id}:${value.index}`)) return {ok: false, error: '测试章节暂时无法连接'};
+      result = {title: entries[value.index].title, text};
+    }
     else if (name === 'progress' || name === 'metadata') {
       const b = books.find(b => b.id === value.id);
       if (name === 'progress') b.progress = value.progress;
@@ -93,9 +100,9 @@ exports.run = async ({record}) => {
     assert.equal(await js('Boolean(document.querySelector(".reading-footer input,.reading-progress"))'), false);
     assert.equal(await js('document.querySelector("[aria-label=上一章]").disabled'), true);
     await click('[aria-label=下一章]');
-    await until('document.querySelector(".text-reading h1").textContent.includes("第二章") && !document.querySelector(".reading-busy")', 'next chapter');
+    await until('document.querySelector(".reading-book-info small").textContent.includes("第二章") && !document.querySelector(".reading-busy")', 'next chapter');
     await click('[aria-label=上一章]');
-    await until('document.querySelector(".text-reading h1").textContent.includes("第一章") && !document.querySelector(".reading-busy")', 'previous chapter');
+    await until('document.querySelector(".reading-book-info small").textContent.includes("第一章") && !document.querySelector(".reading-busy")', 'previous chapter');
     await click('.reader-mode'); await settle();
     await until('Number(document.querySelector(".reading-page-number").textContent.split("/")[1].replace("页", ""))>2', 'multiple columns');
     assert.equal(await js('document.querySelector(".reading-footer").contains(document.querySelector(".reading-page-number"))'), true, 'page count belongs to the bottom toolbar');
@@ -206,6 +213,79 @@ exports.run = async ({record}) => {
     await click('[aria-label=返回书架]');
     record('custom shortcuts reject conflicts, page and scroll keys work, and transparent reading hides both toolbars with black text and zero-alpha pixels; Escape and tray recovery restore the reader');
 
+    const scrollChapter = async (index, offset) => {
+      await js(`(() => {const h=document.querySelector('.text-reading-scroll'),a=h.querySelector('[data-chapter-index="${index}"]');h.scrollTop+=a.getBoundingClientRect().top-h.getBoundingClientRect().top+(${offset});h.dispatchEvent(new Event('scroll'))})()`);
+      await settle();
+    };
+    const currentChapter = () => js('document.querySelector(".reading-book-info small").textContent');
+    const selectFirst = async () => {
+      await click('[aria-label=打开目录]');
+      await click('.toc-list button');
+      await until('!document.querySelector(".reading-busy") && !document.querySelector(".reader-drawer")', 'first chapter selected');
+      await settle();
+    };
+    for (const [id, title] of [['txt', '翻页测试'], ['online', '在线测试']]) {
+      await openBook(title); await selectFirst();
+      await js('document.dispatchEvent(new KeyboardEvent("keydown",{key:"T",code:"KeyT",ctrlKey:true,shiftKey:true,bubbles:true}))'); await settle();
+      await scrollChapter(0, 'a.offsetHeight-h.clientHeight*1.2');
+      await until('Boolean(document.querySelector("[data-chapter-index=\\\"1\\\"]"))', 'next chapter joins the scroll document');
+      await scrollChapter(0, 'a.offsetHeight-h.clientHeight*.4');
+      assert.match(await currentChapter(), /第一章/, 'appending a chapter does not replace the current passage');
+      const boundary = await js('(() => {const h=document.querySelector(".text-reading-scroll").getBoundingClientRect(),a=document.querySelector("[data-chapter-index=\\\"1\\\"]").getBoundingClientRect();return a.top>h.top&&a.top<h.bottom})()');
+      assert.equal(boundary, true, 'the end of one chapter and the next heading share the viewport');
+      fixture.setBackgroundColor('#ffffff'); await settle();
+      await screenshot(`reader-continuous-${id}-transparent.png`);
+      fixture.setBackgroundColor('#00000000');
+      const point = await js('(() => {const r=document.querySelector(".text-reading-scroll").getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()');
+      fixture.webContents.sendInputEvent({type: 'mouseWheel', ...point, deltaY: -700, deltaX: 0, canScroll: true});
+      await until('document.querySelector(".reading-book-info small").textContent.includes("第二章")', 'wheel crosses into next chapter in transparency');
+      await scrollChapter(1, 'a.offsetHeight-h.clientHeight*1.2');
+      await until('Boolean(document.querySelector("[data-chapter-index=\\\"2\\\"]"))', 'third chapter is appended');
+      await scrollChapter(2, 'h.clientHeight*4');
+      await until('!document.querySelector("[data-chapter-index=\\\"0\\\"]") && !document.querySelector("[data-chapter-index=\\\"1\\\"]")', 'distant chapters are released');
+      assert.match(await currentChapter(), /第三章/);
+      // Reloading the previous chapter must leave the current chapter at the same screen coordinate.
+      await scrollChapter(2, '100');
+      await until('Boolean(document.querySelector("[data-chapter-index=\\\"1\\\"]"))', 'scrolling back prepends previous chapter');
+      const anchored = await js('document.querySelector("[data-chapter-index=\\\"2\\\"]").getBoundingClientRect().top-document.querySelector(".text-reading-scroll").getBoundingClientRect().top');
+      assert.ok(Math.abs(anchored + 100) < 2, 'prepending preserves the visible passage');
+      fixture.webContents.sendInputEvent({type: 'mouseWheel', ...point, deltaY: 700, deltaX: 0, canScroll: true});
+      await until('document.querySelector(".reading-book-info small").textContent.includes("第二章")', 'wheel scrolls back into previous chapter');
+      await js('document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))'); await settle();
+      await scrollChapter(1, 'a.offsetHeight-h.clientHeight*.4');
+      const beforeRestore = await js('document.querySelector("[data-chapter-index=\\\"1\\\"]").getBoundingClientRect().top-document.querySelector(".text-reading-scroll").getBoundingClientRect().top');
+      await click('[aria-label=添加或取消书签]');
+      await click('[aria-label=返回书架]');
+      assert.equal(books.find(b => b.id === id).progress.chapter, 1);
+      assert.ok(books.find(b => b.id === id).progress.scrollFraction > .8, 'near-boundary position has an accurate scroll fraction');
+      await openBook(title);
+      const restored = await js('document.querySelector("[data-chapter-index=\\\"1\\\"]").getBoundingClientRect().top-document.querySelector(".text-reading-scroll").getBoundingClientRect().top');
+      assert.ok(Math.abs(restored - beforeRestore) < 2, `reopening restores even the last screen before the next chapter: ${beforeRestore} -> ${restored}; ${JSON.stringify(books.find(b => b.id === id).progress)}`);
+      await selectFirst();
+      await click('[aria-label=查看书签]');
+      await js('Array.from(document.querySelectorAll(".reader-drawer .toc-list button")).find(b=>b.textContent.includes("第二章")).click()');
+      await until('!document.querySelector(".reader-drawer") && !document.querySelector(".reading-busy")', 'bookmark restores continuation position'); await settle();
+      assert.match(await currentChapter(), /第二章/);
+      const bookmarkTop = await js('document.querySelector("[data-chapter-index=\\\"1\\\"]").getBoundingClientRect().top-document.querySelector(".text-reading-scroll").getBoundingClientRect().top');
+      assert.ok(Math.abs(bookmarkTop - beforeRestore) < 2, 'bookmarks preserve near-boundary reading positions');
+      await selectFirst();
+      if (id === 'online') {
+        failedChapters.add('online:1');
+        await scrollChapter(0, 'a.offsetHeight-h.clientHeight*1.2');
+        await until('Boolean(document.querySelector(".reading-continuation button"))', 'online continuation offers retry');
+        assert.match(await currentChapter(), /第一章/);
+        const attempts = chapterRequests.filter(key => key === 'online:1').length;
+        await scrollChapter(0, 'a.offsetHeight-h.clientHeight');
+        await settle();
+        assert.equal(chapterRequests.filter(key => key === 'online:1').length, attempts, 'scrolling does not repeatedly request a failed chapter');
+        failedChapters.delete('online:1');
+        await click('.reading-continuation button');
+        await until('Boolean(document.querySelector("[data-chapter-index=\\\"1\\\"]")) && !document.querySelector(".reading-continuation button")', 'retry joins the next chapter without losing current text');
+      }
+      await click('[aria-label=返回书架]');
+    }
+    record('TXT and online novels scroll continuously in transparency, preserve position on prepend, reopen and bookmarks, release distant chapters and recover from chapter load errors');
+
     await openBook('EPUB 测试');
     if (await js('document.querySelector(".reader-mode").getAttribute("aria-pressed")==="false"')) { await click('.reader-mode'); await settle(); }
     await until('Boolean(document.querySelector(".epub-host iframe")?.contentDocument?.querySelector("h1"))', 'EPUB renders');
@@ -219,9 +299,9 @@ exports.run = async ({record}) => {
     await epubClick(-1);
     await until(`document.querySelector('.epub-container').scrollLeft < ${nextPage}`, 'EPUB left side goes back');
     await click('[aria-label=下一章]');
-    await until('document.querySelector(".reading-book-info small").textContent.includes("第二章")', 'EPUB next chapter');
+    await until('document.querySelector(".reading-book-info small").textContent.includes("第二章") && !document.querySelector(".reading-busy")', 'EPUB next chapter');
     await click('[aria-label=上一章]');
-    await until('document.querySelector(".reading-book-info small").textContent.includes("第一章")', 'EPUB previous chapter');
+    await until('document.querySelector(".reading-book-info small").textContent.includes("第一章") && !document.querySelector(".reading-busy")', 'EPUB previous chapter');
     await click('.reader-mode'); await settle();
     await until('document.querySelector(".epub-container").scrollHeight > document.querySelector(".epub-container").clientHeight', 'EPUB vertical scroll');
     await screenshot('reader-epub-scroll.png');
@@ -232,13 +312,27 @@ exports.run = async ({record}) => {
     assert.equal(await js('getComputedStyle(document.querySelector(".epub-host iframe").contentDocument.body).color'), 'rgb(0, 0, 0)');
     assert.equal(await js('getComputedStyle(document.querySelector(".epub-host iframe").contentDocument.querySelector("#colored-text")).color'), 'rgb(0, 0, 0)', 'transparent mode overrides author-defined important text colors');
     assert.equal(await js('getComputedStyle(document.querySelector(".epub-host iframe").contentDocument.documentElement).backgroundColor'), 'rgba(0, 0, 0, 0)');
+    await js('(() => {const h=document.querySelector(".epub-container"),f=document.querySelector(".epub-host iframe");h.scrollTop+=f.getBoundingClientRect().bottom-h.getBoundingClientRect().bottom-250})()');
+    await until('Array.from(document.querySelectorAll(".epub-host iframe")).some(f=>f.contentDocument?.querySelector("h1")?.textContent.includes("第二章"))', 'EPUB preloads the next chapter near the end');
+    await js('(() => {const h=document.querySelector(".epub-container"),f=Array.from(h.querySelectorAll("iframe")).find(f=>f.contentDocument?.querySelector("h1")?.textContent.includes("第二章"));h.scrollTop+=f.getBoundingClientRect().top-h.getBoundingClientRect().top-h.clientHeight*.4})()');
+    await settle();
+    fixture.setBackgroundColor('#ffffff'); await settle();
+    await screenshot('reader-continuous-epub-transparent.png');
+    fixture.setBackgroundColor('#00000000');
+    const epubPoint = await js('(() => {const r=document.querySelector(".epub-host").getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})()');
+    fixture.webContents.sendInputEvent({type: 'mouseWheel', ...epubPoint, deltaY: -700, deltaX: 0, canScroll: true});
+    await until('document.querySelector(".reading-book-info small").textContent.includes("第二章")', 'EPUB wheel crosses chapter boundary in transparency');
+    assert.equal(await js('Array.from(document.querySelectorAll(".epub-host iframe")).filter(f=>f.contentDocument?.body).every(f=>getComputedStyle(f.contentDocument.body).color==="rgb(0, 0, 0)")'), true, 'new EPUB chapters inherit transparent black text');
+    fixture.webContents.sendInputEvent({type: 'mouseWheel', ...epubPoint, deltaY: 1000, deltaX: 0, canScroll: true});
+    await until('document.querySelector(".reading-book-info small").textContent.includes("第一章")', 'EPUB wheel returns to previous chapter');
     await js('document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))'); await settle();
     assert.equal(await js('getComputedStyle(document.querySelector(".epub-host iframe").contentDocument.querySelector("#colored-text")).color'), 'rgb(190, 40, 40)', 'leaving transparency restores original EPUB inline colors');
     assert.equal(await js('Boolean(document.querySelector(".reading-alert"))'), false);
-    record('EPUB supports body-click page turns, separate chapter arrows and switching to vertical scrolling');
+    record('EPUB supports body-click page turns, chapter navigation and continuous scrolling in both directions with transparent styling on newly loaded chapters');
   } catch (error) {
+    console.error('Reader console:', JSON.stringify(rendererMessages));
     await screenshot('reader-layout-failure.png');
-    console.error(await js('JSON.stringify({selection:getSelection().toString(),page:document.querySelector(".reading-page-number")?.textContent,focused:document.activeElement?.outerHTML.slice(0,180),host:document.querySelector(".text-reading-scroll")?.getBoundingClientRect().toJSON(),overlays:document.querySelectorAll(".reader-overlay").length})'));
+    console.error(await js('JSON.stringify({selection:getSelection().toString(),page:document.querySelector(".reading-page-number")?.textContent,focused:document.activeElement?.outerHTML.slice(0,180),host:document.querySelector(".text-reading-scroll")?.getBoundingClientRect().toJSON(),overlays:document.querySelectorAll(".reader-overlay").length,epub:document.querySelector(".epub-host")?.innerHTML.slice(0,2000),continuation:document.querySelector(".reading-continuation")?.textContent})'));
     throw error;
   } finally {
     fixture.destroy(); ipcMain.removeHandler('moyu:test-reader-layout');

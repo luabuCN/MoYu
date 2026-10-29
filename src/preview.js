@@ -42,22 +42,49 @@ export function installPreview() {
   const library = {books, sources: [source('sample', '示例书源 · 山间书屋'), source('quiet', '示例书源 · 晚风阅读')], preferences: {
     theme: 'paper', previousTheme: 'paper', fontSize: 20, lineHeight: 1.9, width: 720, font: 'serif', readingMode: 'scroll', shortcuts: {...defaultShortcuts}, scrollKeys: true, scrollSpeed: 5,
   }};
-  const state = {panel: 'home', theme: 'light', lastUrl: 'https://weread.qq.com/', hasPage: false, opacity: 1, zoom: 1, pauseOnHide: true, version: '交互预览', bookmarks: [], history: [{url: 'https://weread.qq.com/', title: '微信读书 · 阅读让生活更丰富', at: now}]};
+  const state = {panel: 'home', theme: 'light', toolbarAutoHide: false, toolbarVisible: true, lastUrl: 'https://weread.qq.com/', hasPage: false, opacity: 1, zoom: 1, pauseOnHide: true, version: '交互预览', bookmarks: [], history: [{url: 'https://weread.qq.com/', title: '微信读书 · 阅读让生活更丰富', at: now}]};
   const listeners = new Set();
   const copy = value => structuredClone(value);
   const ok = result => ({ok: true, result: copy(result)});
   const notify = () => listeners.forEach(listener => listener(copy(state)));
+  const toolbarListeners = new Set();
+  let toolbarTimer, toolbarFocused = false, pointer = {x: -1, y: -1};
+  function updateToolbar() {
+    const overToolbar = pointer.x >= 0 && pointer.x < innerWidth && pointer.y >= 0 && pointer.y < (state.toolbarVisible ? 38 : 8);
+    if (!state.toolbarAutoHide || toolbarFocused || overToolbar) {
+      clearTimeout(toolbarTimer); toolbarTimer = null;
+      if (!state.toolbarVisible) { state.toolbarVisible = true; notify(); }
+    } else if (state.toolbarVisible && !toolbarTimer) {
+      toolbarTimer = setTimeout(() => { toolbarTimer = null; state.toolbarVisible = false; notify(); }, 400);
+    }
+  }
+  document.addEventListener('pointermove', event => { pointer = {x: event.clientX, y: event.clientY}; updateToolbar(); });
+  document.documentElement.addEventListener('mouseleave', () => { pointer = {x: -1, y: -1}; updateToolbar(); });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'F6' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault(); toolbarFocused = true; updateToolbar();
+      toolbarListeners.forEach(listener => listener());
+    }
+  });
   const unsupported = () => ({ok: false, error: '当前为交互预览；网页浏览、文件导入和窗口控制请在桌面版使用。'});
   window.moyu = {
     preview: true,
     getState: async () => copy(state),
     onState: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     onFocusAddress: () => () => {}, onReaderRecovery: () => () => {},
+    onFocusToolbar: listener => { toolbarListeners.add(listener); return () => toolbarListeners.delete(listener); },
     action: async (name, value) => {
       if (name === 'panel') { if (value === 'web') return unsupported(); state.panel = value; }
       else if (name === 'theme') state.theme = state.theme === 'light' ? 'dark' : 'light';
       else if (['opacity', 'zoom'].includes(name)) state[name] = value;
       else if (name === 'hover-hide') state.hoverHide = value;
+      else if (name === 'hover-hide-delay') state.hoverHideDelayMs = value;
+      else if (name === 'toolbar-auto-hide') { state.toolbarAutoHide = value; toolbarFocused = false; updateToolbar(); }
+      else if (name === 'toolbar-focus') { toolbarFocused = Boolean(value); updateToolbar(); }
+      else if (name === 'toolbar-dismiss') {
+        toolbarFocused = false; clearTimeout(toolbarTimer); toolbarTimer = null;
+        state.toolbarVisible = !state.toolbarAutoHide;
+      }
       else if (name === 'edge-hide') state.edgeHide = value;
       else if (name === 'pause-on-hide') state.pauseOnHide = value;
       else if (name === 'pin') state.pinned = !state.pinned;

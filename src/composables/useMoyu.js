@@ -4,9 +4,10 @@ const initialState = {
   panel: 'home', hidden: false, url: '', title: '', loading: false, error: '',
   hasPage: false, lastUrl: '', canBack: false, canForward: false, bookmarked: false,
   webFullscreen: false,
+  toolbarAutoHide: false, toolbarVisible: true,
   opacity: 1, zoom: 1, pinned: false, mobile: false, theme: 'light',
   pauseOnHide: true, hoverHide: false, edgeHide: false, bookmarks: [], history: [],
-  hoverHideDelayMs: 2000, hoverHideDistance: 100, outsideClickStatus: 'stopped',
+  hoverHideDelayMs: 1000, hoverHideDistance: 100, outsideClickStatus: 'stopped',
   shortcutAvailable: true, notice: '', version: '',
 };
 

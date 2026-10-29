@@ -23,7 +23,7 @@ module.exports = {
   extraMetadata: {moyuDistribution: 'installed'},
   // An explicit list keeps books, browser profiles, old releases and screenshots out.
   files: [
-    '*.cjs', 'package.json', 'reader-shortcuts.json', 'legado-runtime.js',
+    '*.cjs', 'package.json', 'reader-shortcuts.json', 'builtin-sources.json', 'legado-runtime.js',
     'renderer-dist/**/*', 'web-scrollbars.css', 'ui/**/*', 'assets/brand/**/*',
     'READER.md', 'LICENSE', 'THIRD-PARTY-NOTICES.txt',
     '!electron-builder.config.cjs', '!**/*.log',

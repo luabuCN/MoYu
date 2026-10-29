@@ -8,6 +8,7 @@ const dns = require('node:dns/promises');
 const net = require('node:net');
 const iconv = require('iconv-lite');
 const JSON5 = require('json5');
+const builtinSources = require('./builtin-sources.json');
 const MAX_BOOK = 50 * 1024 * 1024;
 const MAX_RESPONSE = 8 * 1024 * 1024;
 const clean = (value, max = 300) => String(value ?? '').replace(/\0/g, '').slice(0, max);
@@ -224,6 +225,9 @@ async function requestPage(value, options = {}, transport = {}) {
 }
 
 const {defaultShortcuts, normalizeShortcuts} = require('./reader-shortcuts.cjs');
+function sourceAddress(value) {
+  try { return new URL(value).href.replace(/\/+$/, ''); } catch { return ''; }
+}
 class ReaderLibrary {
   constructor(directory) {
     this.root = path.join(directory, 'reader');
@@ -244,6 +248,20 @@ class ReaderLibrary {
         this.value.notice = '书架索引损坏，已保留备份；原始书籍仍在 reader 文件夹中。';
       }
     }
+    this.seedBuiltinSources();
+  }
+  seedBuiltinSources() {
+    // Record each seed once so deleting a default source is a lasting choice.
+    const seeded = new Set(Array.isArray(this.value.builtinSourceSeeds) ? this.value.builtinSourceSeeds : []);
+    let changed = false;
+    for (const {key, raw} of builtinSources) {
+      if (seeded.has(key)) continue;
+      const base = raw.bookSourceUrl, id = hash(base + raw.bookSourceName);
+      const existing = this.value.sources.some(source => source.id === id || sourceAddress(source.baseUrl || source.raw?.bookSourceUrl || source.raw?.origin || source.raw?.baseUrl) === sourceAddress(base));
+      if (!existing) this.value.sources.push({id, name: raw.bookSourceName, baseUrl: base, enabled: true, raw: structuredClone(raw)});
+      seeded.add(key); changed = true;
+    }
+    if (changed) { this.value.builtinSourceSeeds = [...seeded]; this.save(); }
   }
   save() {
     const temporary = `${this.index}.tmp`;
@@ -312,7 +330,8 @@ class ReaderLibrary {
   progress(id, progress) {
     const book = this.book(id);
     book.progress = {chapter: Math.floor(clamp(progress.chapter, 0, Math.max(book.chapterCount - 1, 0))),
-      fraction: clamp(progress.fraction, 0, 1), percent: clamp(progress.percent, 0, 100), cfi: clean(progress.cfi, 4000)};
+      fraction: clamp(progress.fraction, 0, 1), percent: clamp(progress.percent, 0, 100), cfi: clean(progress.cfi, 4000),
+      ...(Number.isFinite(progress.scrollFraction) ? {scrollFraction: clamp(progress.scrollFraction, 0, 1)} : {})};
     book.lastRead = Date.now(); this.save(); return book;
   }
   metadata(id, data) {
@@ -413,7 +432,8 @@ class ReaderLibrary {
     const history = {sourceId: book.sourceId, sourceName: book.sourceName, url: book.url, storageId: book.storageId || '', progress: book.progress, marks: book.marks, switchedAt: Date.now()};
     const updated = {...book, sourceId: source.id, sourceName: source.name, url: url.href, storageId, chapterCount: entries.length,
       sourceHistory: [...(book.sourceHistory || []), history],
-      progress: {chapter: index, fraction, percent: (index + fraction) / entries.length * 100},
+      progress: {chapter: index, fraction, percent: (index + fraction) / entries.length * 100,
+        ...(matched && Number.isFinite(book.progress.scrollFraction) ? {scrollFraction: book.progress.scrollFraction} : {})},
       marks: (book.marks || []).flatMap(mark => {
         const chapter = byTitle.get(key(previousToc[mark.chapter]?.title));
         return chapter === undefined ? [] : [{...mark, chapter, key: `${chapter}:${Math.floor((mark.fraction || 0) * 100)}`}];
@@ -464,7 +484,8 @@ class ReaderLibrary {
     const key = clean(position.key, 4000);
     const old = book.marks.findIndex(mark => mark.key === key);
     if (old >= 0) book.marks.splice(old, 1);
-    else if (book.marks.length < 200) book.marks.push({key, title: clean(position.title), chapter: position.chapter, fraction: clamp(position.fraction, 0, 1), cfi: clean(position.cfi, 4000), createdAt: Date.now()});
+    else if (book.marks.length < 200) book.marks.push({key, title: clean(position.title), chapter: position.chapter, fraction: clamp(position.fraction, 0, 1), cfi: clean(position.cfi, 4000), createdAt: Date.now(),
+      ...(Number.isFinite(position.scrollFraction) ? {scrollFraction: clamp(position.scrollFraction, 0, 1)} : {})});
     this.save(); return book;
   }
   search(id, query) {

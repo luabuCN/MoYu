@@ -45,6 +45,23 @@ test('reader modes survive reload and older libraries keep their original settin
   assert.equal(migrated.theme, 'green'); assert.equal(migrated.fontSize, 26);
 });
 
+test('continuous reading positions and bookmarks survive disk reload without changing legacy page progress', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moyu-reader-continuous-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const library = new ReaderLibrary(directory);
+  const {book} = library.importFile('连续阅读.txt', Buffer.from('第一章 山谷\n山谷里的故事。\n第二章 灯火\n灯火里的故事。'));
+  library.progress(book.id, {chapter: 0, fraction: 1, scrollFraction: .96, percent: 48});
+  library.mark(book.id, {chapter: 0, fraction: 1, scrollFraction: .96, key: '0:100', title: '山谷'});
+  const restored = new ReaderLibrary(directory);
+  assert.equal(restored.open(book.id).book.progress.scrollFraction, .96);
+  assert.equal(restored.open(book.id).book.marks[0].scrollFraction, .96);
+  restored.progress(book.id, {chapter: 1, fraction: .4, percent: 70});
+  const paged = new ReaderLibrary(directory).open(book.id).book.progress;
+  assert.equal(paged.fraction, .4);
+  assert.equal('scrollFraction' in paged, false, 'switching to pages does not retain a stale continuous position');
+  assert.equal(restored.progress(book.id, {scrollFraction: 8}).progress.scrollFraction, 1);
+});
+
 test('addresses, local ports, Chinese domains, and searches resolve correctly', () => {
   assert.equal(normalizeInput(' douyin.com '), 'https://douyin.com/');
   assert.equal(normalizeInput('https://weread.qq.com/web/shelf'), 'https://weread.qq.com/web/shelf');
@@ -74,6 +91,8 @@ test('history is bounded, bookmarks toggle, and preferences survive disk reload'
   t.after(() => fs.rmSync(directory, {recursive:true, force:true}));
   const store = new Store(directory);
   store.value.opacity = .65;
+  assert.equal(store.value.toolbarAutoHide, false);
+  store.value.toolbarAutoHide = true;
   store.value.mobile = true;
   store.value.hoverHide = true;
   store.value.edgeHide = true;
@@ -86,6 +105,7 @@ test('history is bounded, bookmarks toggle, and preferences survive disk reload'
   assert.equal(new Store(directory).value.opacity, .65);
   assert.equal(new Store(directory).value.mobile, true);
   assert.equal(new Store(directory).value.hoverHide, true);
+  assert.equal(new Store(directory).value.toolbarAutoHide, true);
   assert.equal(new Store(directory).value.edgeHide, true);
   assert.equal(new Store(directory).value.bookmarks.length, 1);
   assert.equal(store.toggleBookmark('https://example.com/204', 'Test'), false);

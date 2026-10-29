@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('moyu', Object.freeze({
     ipcRenderer.on('moyu:focus-address', listener);
     return () => ipcRenderer.removeListener('moyu:focus-address', listener);
   },
+  onFocusToolbar: callback => {
+    const listener = () => callback();
+    ipcRenderer.on('moyu:focus-toolbar', listener);
+    return () => ipcRenderer.removeListener('moyu:focus-toolbar', listener);
+  },
   onReaderRecovery: callback => {
     const listener = () => callback();
     ipcRenderer.on('moyu:reader-recover', listener);

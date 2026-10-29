@@ -19,6 +19,9 @@ const dataDirectory = smokeTest ? fs.mkdtempSync(path.join(os.tmpdir(), 'moyu-te
   : resolveDataDirectory({isPackaged: app.isPackaged, distribution: require('./package.json').moyuDistribution,
     sourceRoot: __dirname, executablePath: process.execPath, appData: app.getPath('appData')});
 app.setName('沫鱼');
+// The Chinese app-name token breaks headers/encoding in some login SDKs.
+// Set the fallback before sessions exist so pages and workers share a valid UA.
+app.userAgentFallback = readerUserAgent(app.userAgentFallback);
 app.setPath('userData', path.join(dataDirectory, 'profile'));
 app.setAppUserModelId('local.moyu.browser');
 const store = new Store(dataDirectory);
@@ -68,8 +71,10 @@ let hoverArmed = false;
 let hoverExitStartedAt = null;
 let restoredAt = 0;
 let outsideClickStatus = 'stopped';
-const hoverHideDelayMs = 2000;
 const hoverHideDistance = 100;
+const toolbarHeight = 38, toolbarRevealHeight = 8, toolbarHideDelayMs = 400;
+let toolbarVisible = !store.value.toolbarAutoHide;
+let toolbarExitStartedAt = null, toolbarFocused = false;
 let pointerTimer;
 let hoverSuspended = 0;
 let cachedApplicationIcon;
@@ -153,7 +158,8 @@ function uiState() {
     opacity: prefs.opacity, zoom: prefs.zoom, pinned: prefs.pinned, mobile: prefs.mobile,
     theme: prefs.theme, pauseOnHide: prefs.pauseOnHide,
     hoverHide: prefs.hoverHide, edgeHide: prefs.edgeHide,
-    hoverHideDelayMs, hoverHideDistance, outsideClickStatus,
+    hoverHideDelayMs: prefs.hoverHideDelayMs, hoverHideDistance, outsideClickStatus,
+    toolbarAutoHide: prefs.toolbarAutoHide, toolbarVisible,
     bookmarks: prefs.bookmarks,
     history: prefs.history, shortcutAvailable, notice,
     bookmarked: prefs.bookmarks.some(item => item.url === current.url),
@@ -168,8 +174,36 @@ function layout() {
   if (panel !== 'reader') readerCapturing = false;
   if (!win || win.isDestroyed() || !web?.webContents || web.webContents.isDestroyed()) return;
   const [width, height] = win.getContentSize();
-  web.setBounds({x: 0, y: 38, width: Math.max(1, width), height: Math.max(1, height - 38)});
+  const top = toolbarVisible ? toolbarHeight : 0;
+  web.setBounds({x: 0, y: top, width: Math.max(1, width), height: Math.max(1, height - top)});
   web.setVisible(panel === 'web' && !hidden && !current.error);
+}
+function setToolbarVisible(visible) {
+  const next = !store.value.toolbarAutoHide || visible;
+  if (toolbarVisible === next) return;
+  toolbarVisible = next;
+  toolbarExitStartedAt = null;
+  layout(); publish();
+}
+function updateToolbarVisibility(point = screen.getCursorScreenPoint(), now = performance.now()) {
+  if (!store.value.toolbarAutoHide) { setToolbarVisible(true); return; }
+  if (!win || win.isDestroyed() || hidden || !win.isVisible() || win.isMinimized() || readerTransparent) {
+    toolbarExitStartedAt = null; return;
+  }
+  // Native webpage content sits above the shell, so DOM mouseenter cannot reveal it.
+  // Use content coordinates to include maximized windows and mixed-DPI monitors.
+  const rect = win.getContentBounds();
+  const top = win.isMaximized() ? Math.max(rect.y, screen.getDisplayMatching(rect).workArea.y) : rect.y;
+  const overToolbar = point.x >= rect.x && point.x < rect.x + rect.width && point.y >= top &&
+    point.y < top + (toolbarVisible ? toolbarHeight : toolbarRevealHeight);
+  if (overToolbar || toolbarFocused || manipulatingWindows.size || hoverSuspended) {
+    toolbarExitStartedAt = null;
+    if (overToolbar || toolbarFocused) setToolbarVisible(true);
+    return;
+  }
+  if (!toolbarVisible) return;
+  if (toolbarExitStartedAt === null) toolbarExitStartedAt = now;
+  if (now - toolbarExitStartedAt >= toolbarHideDelayMs) setToolbarVisible(false);
 }
 function pointInWindow(point, target) {
   if (!target || target.isDestroyed() || !target.isVisible() || target.isMinimized()) return false;
@@ -217,7 +251,7 @@ function updateHoverVisibility(point = screen.getCursorScreenPoint()) {
   }
   const now = performance.now();
   if (hoverExitStartedAt === null) hoverExitStartedAt = now;
-  else if (now - hoverExitStartedAt >= hoverHideDelayMs) hideWindow({trayOnly: true});
+  if (now - hoverExitStartedAt >= store.value.hoverHideDelayMs) hideWindow({trayOnly: true});
 }
 function updateTrayMenu() {
   if (!tray) return;
@@ -273,6 +307,16 @@ function handleKeys(contents) {
       return;
     }
     if (contents !== win.webContents && contents !== web?.webContents) return;
+    if (key === 'f6' && !input.control && !input.meta && !input.alt &&
+      !(panel === 'reader' && Object.values(readerLibrary.value.preferences.shortcuts).includes('F6'))) {
+      event.preventDefault();
+      recoverReaderPresentation();
+      toolbarFocused = true; toolbarExitStartedAt = null;
+      setToolbarVisible(true);
+      win.webContents.focus();
+      win.webContents.send('moyu:focus-toolbar');
+      return;
+    }
     if ((input.control || input.meta) && key === 'w') {
       event.preventDefault();
       if (!input.isAutoRepeat) void perform('close-page');
@@ -329,6 +373,7 @@ function makeWebView(webSession) {
   web.setBackgroundColor('#ffffff');
   win.contentView.addChildView(web);
   const wc = web.webContents;
+  wc.on('focus', () => { toolbarFocused = false; toolbarExitStartedAt = null; });
   mediaController = new MediaController(wc, shouldPauseMedia);
   // A detached or closed page must not update a newly opened page's state.
   const onCurrentPage = (event, listener) => wc.on(event, (...args) => {
@@ -391,7 +436,7 @@ function makeWebView(webSession) {
 }
 function applyUserAgent() {
   if (web.webContents.session !== browserSession) return;
-  const desktop = browserSession.getUserAgent().replace(/\sElectron\/[^\s]+/g, '').replace(/\s(?:moyu-browser|shpeerlazy-browser)\/[^\s]+/gi, '');
+  const desktop = readerUserAgent(browserSession.getUserAgent());
   // A selectable mobile UA helps narrow windows; sites retain their own behavior.
   const chrome = /Chrome\/([\d.]+)/.exec(desktop)?.[1] || '140.0.0.0';
   const mobile = `Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Mobile Safari/537.36`;
@@ -518,6 +563,23 @@ async function perform(name, value) {
     case 'hover-hide':
       store.value.hoverHide = Boolean(value); store.save();
       resetHoverTracking(); updateHoverVisibility(); syncOutsideClickMonitor(); updateTrayMenu(); break;
+    case 'hover-hide-delay':
+      if (!Number.isSafeInteger(value) || value < 0) throw new Error('请输入大于或等于 0 的有效延迟时间');
+      store.value.hoverHideDelayMs = value; store.save();
+      hoverExitStartedAt = null; break;
+    case 'toolbar-auto-hide':
+      store.value.toolbarAutoHide = Boolean(value); store.save();
+      toolbarFocused = false; toolbarExitStartedAt = null;
+      updateToolbarVisibility(); break;
+    case 'toolbar-focus':
+      toolbarFocused = Boolean(value); toolbarExitStartedAt = null;
+      if (toolbarFocused) setToolbarVisible(true);
+      break;
+    case 'toolbar-dismiss':
+      toolbarFocused = false; toolbarExitStartedAt = null;
+      setToolbarVisible(false);
+      if (panel === 'web' && web) web.webContents.focus();
+      break;
     case 'edge-hide':
       store.value.edgeHide = Boolean(value); store.save();
       if (!store.value.edgeHide && edgeHandle && !edgeHandle.isDestroyed()) edgeHandle.hide();
@@ -718,6 +780,8 @@ async function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
   win.webContents.on('will-navigate', (event, url) => { if (url !== shellUrl) event.preventDefault(); });
   handleKeys(win.webContents);
+  win.on('blur', () => { toolbarFocused = false; toolbarExitStartedAt = null; });
+  win.webContents.on('blur', () => { toolbarFocused = false; toolbarExitStartedAt = null; });
   win.webContents.on('render-process-gone', () => { readerCapturing = false; recoverReaderPresentation(); });
   win.webContents.on('did-start-loading', () => { readerCapturing = false; recoverReaderPresentation(); });
   win.on('resize', () => { layout(); publish(); });
@@ -756,7 +820,10 @@ async function createWindow() {
   if (!smokeTest) {
     // Screen coordinates cover the shell and embedded Chromium view.
     // Polling at one display frame avoids false mouseleave events between them.
-    pointerTimer = setInterval(() => { if (store.value.hoverHide) updateHoverVisibility(); }, 16);
+    pointerTimer = setInterval(() => {
+      if (store.value.hoverHide) updateHoverVisibility();
+      if (store.value.toolbarAutoHide) updateToolbarVisibility();
+    }, 16);
     shortcutAvailable = globalShortcut.register('CommandOrControl+Shift+Space', () => hidden || !win.isVisible() || win.isMinimized() ? restoreWindow() : hideWindow());
     if (!shortcutAvailable) notice = '老板键被其他程序占用，可使用系统托盘恢复窗口';
   }
@@ -764,7 +831,7 @@ async function createWindow() {
   log(`started electron=${process.versions.electron}`);
   if (smokeTest) {
     try {
-      await require('./test/integration.cjs').run({app, win, store, uiState, perform, navigate, getWeb: () => web, browserSession, dataDirectory, hideWindow, restoreWindow, updateHoverVisibility, getTray: () => tray, getEdge: () => edgeHandle});
+      await require('./test/integration.cjs').run({app, win, store, uiState, perform, navigate, getWeb: () => web, browserSession, dataDirectory, hideWindow, restoreWindow, updateHoverVisibility, updateToolbarVisibility, getTray: () => tray, getEdge: () => edgeHandle});
       quitting = true; tray.destroy(); app.exit(0);
     } catch (error) {
       console.error(error); quitting = true; tray.destroy(); app.exit(1);

@@ -46,9 +46,10 @@ exports.run = async ({record}) => {
   const ses = session.fromPartition(`moyu-source-network-${Date.now()}`);
   try {
     const defaultAgent = ses.getUserAgent();
-    assert.match(defaultAgent, /沫鱼\//, 'regression must use the actual Chinese application name');
-    assert.throws(() => new Headers({'User-Agent': defaultAgent}), /ByteString/);
-    const userAgent = readerUserAgent(defaultAgent);
+    assert.doesNotMatch(defaultAgent, /[^\x20-\x7e]|Electron\//, 'new sessions inherit the header-safe browser identity');
+    const legacyAgent = defaultAgent.replace(' Chrome/', ' 沫鱼/1.6.0 Chrome/');
+    assert.throws(() => new Headers({'User-Agent': legacyAgent}), /ByteString/);
+    const userAgent = readerUserAgent(legacyAgent);
     ses.setUserAgent(userAgent);
     const agentResponse = await chromiumFetch(ses, origin + '/agent', {headers: {'User-Agent': ses.getUserAgent()}});
     const agentData = await agentResponse.json();

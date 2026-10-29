@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const DEFAULTS = Object.freeze({
   opacity: 1, zoom: 1, pinned: false, mobile: false, theme: 'light',
-  pauseOnHide: true, hoverHide: false, edgeHide: false,
+  pauseOnHide: true, hoverHide: false, hoverHideDelayMs: 1000, edgeHide: false, toolbarAutoHide: false,
   bounds: null, lastUrl: '', bookmarks: [], history: [],
 });
 
@@ -67,12 +67,13 @@ class Store {
     this.value = structuredClone(DEFAULTS);
     try {
       const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      for (const key of ['pinned', 'mobile', 'pauseOnHide', 'hoverHide', 'edgeHide']) {
+      for (const key of ['pinned', 'mobile', 'pauseOnHide', 'hoverHide', 'edgeHide', 'toolbarAutoHide']) {
         if (typeof saved[key] === 'boolean') this.value[key] = saved[key];
       }
       if (['light', 'dark'].includes(saved.theme)) this.value.theme = saved.theme;
       if (Number.isFinite(saved.opacity)) this.value.opacity = Math.max(.3, Math.min(1, saved.opacity));
       if (Number.isFinite(saved.zoom)) this.value.zoom = Math.max(.5, Math.min(2, saved.zoom));
+      if (Number.isSafeInteger(saved.hoverHideDelayMs) && saved.hoverHideDelayMs >= 0) this.value.hoverHideDelayMs = saved.hoverHideDelayMs;
       this.value.bounds = saved.bounds && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(saved.bounds[key])) ? saved.bounds : null;
       this.value.lastUrl = webUrl(saved.lastUrl) || '';
       this.value.bookmarks = cleanList(saved.bookmarks);

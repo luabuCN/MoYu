@@ -122,7 +122,7 @@ async function initialize(data) {
     // Registered after EPUB resource substitution, before any document enters an iframe.
     current.spine.hooks.serialize.register(sanitizeSection);
     await nextTick();
-    rendition = current.renderTo(host.value, {width: '100%', height: '100%', spread: 'none', flow: props.preferences.readingMode === 'paged' ? 'paginated' : 'scrolled-doc',
+    rendition = current.renderTo(host.value, {width: '100%', height: '100%', spread: 'none', manager: 'continuous', flow: props.preferences.readingMode === 'paged' ? 'paginated' : 'scrolled-continuous',
       allowScriptedContent: false, allowPopups: false, method: 'srcdoc'});
     rendition.on('relocated', report);
     rendition.on('displayError', error => emit('error', error?.message || 'EPUB 章节无法显示'));
@@ -145,12 +145,17 @@ async function initialize(data) {
       }, true);
     });
     applyTheme();
+    const located = new Promise(resolve => rendition.once('relocated', resolve));
     try { await bounded(rendition.display(data.book.progress?.cfi || undefined)); }
     catch { await bounded(rendition.display()); }
+    await bounded(located);
     if (token !== revision) return;
     emit('ready');
+    let width = host.value.clientWidth, height = host.value.clientHeight;
     observer = new ResizeObserver(() => {
-      if (props.active && host.value?.clientWidth && host.value?.clientHeight) rendition?.resize(host.value.clientWidth, host.value.clientHeight);
+      if (!props.active || !host.value?.clientWidth || !host.value?.clientHeight || width === host.value.clientWidth && height === host.value.clientHeight) return;
+      width = host.value.clientWidth; height = host.value.clientHeight;
+      rendition?.resize(width, height);
     });
     observer.observe(host.value);
     const metadata = await current.loaded.metadata;
@@ -197,7 +202,7 @@ async function seek(percent) {
 }
 watch(() => props.data, initialize, {immediate: true, flush: 'post'});
 watch(() => [props.preferences.theme, props.preferences.font, props.preferences.fontSize, props.preferences.lineHeight], applyTheme);
-watch(() => props.preferences.readingMode, mode => { rendition?.flow(mode === 'paged' ? 'paginated' : 'scrolled-doc'); });
+watch(() => props.preferences.readingMode, mode => { rendition?.flow(mode === 'paged' ? 'paginated' : 'scrolled-continuous'); });
 watch(() => props.active, async active => { if (active) { await nextTick(); if (host.value?.clientWidth) rendition?.resize(host.value.clientWidth, host.value.clientHeight); } });
 onUnmounted(() => { ++revision; cleanup(); });
 defineExpose({turn, display, search, seek, scroll});

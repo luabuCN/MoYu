@@ -1,14 +1,31 @@
 <script setup>
+import {ref} from 'vue';
 import AppIcon from './AppIcon.vue';
 import BrandLogo from './BrandLogo.vue';
 
 defineProps({state: {type: Object, required: true}});
 const emit = defineEmits(['action', 'panel']);
 const preview = Boolean(window.moyu?.preview);
+const header = ref();
+function focus() {
+  header.value?.querySelector('button:not([hidden]):not(:disabled)')?.focus();
+  emit('action', 'toolbar-focus', true);
+}
+function focusIn(event) {
+  if (event.target.matches(':focus-visible')) emit('action', 'toolbar-focus', true);
+}
+function focusOut(event) {
+  if (!header.value?.contains(event.relatedTarget)) emit('action', 'toolbar-focus', false);
+}
+function dismiss() {
+  if (header.value?.contains(document.activeElement)) document.activeElement.blur();
+  emit('action', 'toolbar-dismiss');
+}
+defineExpose({focus});
 </script>
 
 <template>
-  <header class="titlebar">
+  <header ref="header" class="titlebar" :hidden="!state.toolbarVisible" @focusin="focusIn" @focusout="focusOut" @pointerdown="emit('action', 'toolbar-focus', false)" @keydown.esc.prevent="dismiss">
     <nav class="top-navigation" aria-label="网页导航">
       <button class="icon-button" data-panel="home" title="首页 · 输入网址" aria-label="首页"
         :aria-current="state.panel === 'home' ? 'page' : undefined" @click="emit('panel', 'home')"><AppIcon name="home" /></button>

@@ -24,13 +24,18 @@ function wav() {
   buffer.write('data',36); buffer.writeUInt32LE(samples * 2,40);
   return buffer;
 }
-exports.run = async ({win, store, uiState, perform, navigate, getWeb, browserSession, dataDirectory, hideWindow, restoreWindow, updateHoverVisibility, getTray, getEdge}) => {
+exports.run = async ({win, store, uiState, perform, navigate, getWeb, browserSession, dataDirectory, hideWindow, restoreWindow, updateHoverVisibility, updateToolbarVisibility, getTray, getEdge}) => {
   const passed = [];
   const requests = [];
   const record = label => { passed.push(label); console.log(`PASS ${label}`); };
   const server = http.createServer((req,res) => {
     const request = {url: req.url, method: req.method, headers: req.headers, body: ''};
     requests.push(request);
+    if (req.url === '/browser-identity') {
+      res.writeHead(200, {'Content-Type': 'application/json'});
+      res.end(JSON.stringify({userAgent: req.headers['user-agent'], clientAgent: req.headers['x-client-ua']}));
+      return;
+    }
     if (req.method === 'POST') {
       req.on('data', chunk => { request.body += chunk; });
       req.on('end', () => {
@@ -63,6 +68,17 @@ exports.run = async ({win, store, uiState, perform, navigate, getWeb, browserSes
     await require('./reader-verification.integration.cjs').run({record});
     await require('./reader-layout.integration.cjs').run({record});
     await perform('panel', 'reader');
+    await until(() => shellJS('document.querySelectorAll(".library-tabs button").length === 3'), 'reader library ready');
+    await shellJS('Array.from(document.querySelectorAll(".library-tabs button")).find(b=>b.textContent.includes("书源管理")).click()');
+    await until(() => shellJS('document.querySelectorAll(".source-list article").length === 3'), 'built-in sources shown without import');
+    assert.deepEqual(await shellJS('Array.from(document.querySelectorAll(".source-list article strong")).map(e=>e.textContent)'), ['笔趣阁⛅', '番茄小说', '📖玄幻文学']);
+    assert.equal(await shellJS('Array.from(document.querySelectorAll(".source-list .reader-secondary")).every(b=>!b.disabled && b.getAttribute("aria-pressed")==="true")'), true, 'all bundled rules are compatible and enabled');
+    await shellJS('document.querySelector(".source-list article:last-child").scrollIntoView({block:"end"}); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    fs.writeFileSync(path.join(output, 'reader-builtin-sources.png'), (await win.webContents.capturePage()).toPNG());
+    await shellJS('Array.from(document.querySelectorAll(".library-tabs button")).find(b=>b.textContent.includes("找小说")).click()');
+    assert.equal(await shellJS('document.querySelector(".source-select-label").textContent.includes("搜索书源") && !document.querySelector(".reader-empty")'), true, 'new users can search directly');
+    await shellJS('Array.from(document.querySelectorAll(".library-tabs button")).find(b=>b.textContent.includes("我的书架")).click()');
+    record('new desktop libraries show three compatible built-in sources already enabled and offer novel search without importing anything');
     await perform('opacity', .65);
     assert.equal((await shellJS('window.moyu.reader("presentation",{transparent:true})')).ok, true);
     // getBackgroundColor returns RGB; captured pixels verify the alpha channel.
@@ -70,7 +86,12 @@ exports.run = async ({win, store, uiState, perform, navigate, getWeb, browserSes
     assert.equal(win.getOpacity(), 1, 'transparent reading keeps text fully opaque');
     await shellJS('document.documentElement.dataset.readerTransparent="true"; document.querySelector("#reader-panel").style.background="transparent"');
     await shellJS('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    const transparentCapture = await win.webContents.capturePage();
+    let transparentCapture = await win.webContents.capturePage();
+    // DOM layout can precede the native compositor's next frame in a background window.
+    await until(async () => {
+      transparentCapture = await win.webContents.capturePage();
+      return transparentCapture.toBitmap()[3] === 0;
+    }, 'native transparent frame', 3000).catch(() => {});
     if (transparentCapture.toBitmap()[3] !== 0) {
       fs.writeFileSync(path.join(output, 'transparent-failure.png'), transparentCapture.toPNG());
       console.log('Transparency diagnostics:', await shellJS('JSON.stringify({elements:document.elementsFromPoint(0,0).map(e=>({tag:e.tagName,id:e.id,background:getComputedStyle(e).background,colorScheme:getComputedStyle(e).colorScheme})),reader:document.documentElement.dataset.readerTransparent})'));
@@ -103,6 +124,30 @@ exports.run = async ({win, store, uiState, perform, navigate, getWeb, browserSes
     assert.equal(getWeb().getBounds().height,win.getContentSize()[1] - 38);
     assert.equal(await fixtureJS('typeof require + "/" + typeof process + "/" + typeof window.moyu'), 'undefined/undefined/undefined');
     record('address form loads real sandboxed WebContentsView with no Node or IPC bridge');
+
+    const identity = await fixtureJS(`(async () => {
+      const agent = navigator.userAgent;
+      const wire = await (await fetch('/browser-identity', {headers: new Headers({'X-Client-UA': agent})})).json();
+      const url = URL.createObjectURL(new Blob(['postMessage({agent: navigator.userAgent, encoded: btoa(navigator.userAgent)})'], {type: 'text/javascript'}));
+      const worker = new Worker(url);
+      let timer;
+      try {
+        const background = await new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Worker identity timed out')), 5000);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+        });
+        return {agent, encoded: btoa(agent), wire, background};
+      } finally { clearTimeout(timer); worker.terminate(); URL.revokeObjectURL(url); }
+    })()`);
+    assert.doesNotMatch(identity.agent, /[^\x20-\x7e]|Electron\/|(?:moyu-browser|shpeerlazy-browser)\//);
+    assert.match(identity.agent, /Chrome\/[\d.]+/);
+    assert.equal(identity.agent, browserSession.getUserAgent());
+    assert.equal(identity.wire.userAgent, identity.agent);
+    assert.equal(identity.wire.clientAgent, identity.agent);
+    assert.equal(identity.background.agent, identity.agent);
+    assert.equal(identity.background.encoded, identity.encoded);
+    record('pages, HTTP requests and workers share an ASCII browser identity compatible with login headers and base64 encoding');
 
     await fixtureJS('document.querySelector("#next").click()');
     await until(() => uiState().title === 'Fixture /two' && !uiState().loading, 'second page');
@@ -321,6 +366,48 @@ exports.run = async ({win, store, uiState, perform, navigate, getWeb, browserSes
     assert.equal(new Store(dataDirectory).value.hoverHide,false);
     await perform('opacity',1);
     record('mouse exit hides to tray, returning cannot reopen it, and tray click restores opacity and media without immediate rehiding');
+
+    await perform('panel', 'settings');
+    await shellJS('document.querySelector("#toolbar-auto-hide-setting").click()');
+    await until(() => uiState().toolbarAutoHide, 'toolbar auto-hide enabled');
+    assert.equal(new Store(dataDirectory).value.toolbarAutoHide, true);
+    await perform('panel', 'web');
+    const toolbarRect = win.getContentBounds();
+    const toolbarPoint = {x: toolbarRect.x + 150, y: toolbarRect.y + 2};
+    const pagePoint = {x: toolbarRect.x + 150, y: toolbarRect.y + 150};
+    updateToolbarVisibility(toolbarPoint, 0);
+    updateToolbarVisibility(pagePoint, 100);
+    updateToolbarVisibility(pagePoint, 499);
+    assert.equal(uiState().toolbarVisible, true, 'short pointer departures do not flicker');
+    updateToolbarVisibility(pagePoint, 501);
+    await until(() => shellJS('document.querySelector(".titlebar").hidden && document.querySelector("#workspace").getBoundingClientRect().top === 0'), 'toolbar hidden and workspace expanded');
+    assert.equal(uiState().hidden, false, 'only the toolbar is hidden');
+    assert.equal(getWeb().getBounds().y, 0);
+    assert.equal(getWeb().getBounds().height, win.getContentSize()[1]);
+    updateToolbarVisibility(toolbarPoint, 600);
+    await until(() => shellJS('!document.querySelector(".titlebar").hidden'), 'top edge reveals toolbar');
+    assert.equal(getWeb().getBounds().y, 38);
+    updateToolbarVisibility({x: toolbarPoint.x, y: toolbarRect.y + 30}, 5000);
+    assert.equal(uiState().toolbarVisible, true, 'toolbar buttons remain usable');
+    updateToolbarVisibility(pagePoint, 5100);
+    updateToolbarVisibility(toolbarPoint, 5300);
+    updateToolbarVisibility(pagePoint, 5400);
+    updateToolbarVisibility(pagePoint, 5700);
+    assert.equal(uiState().toolbarVisible, true, 'returning to toolbar cancels the previous countdown');
+    updateToolbarVisibility(pagePoint, 5900);
+    assert.equal(uiState().toolbarVisible, false);
+    getWeb().webContents.sendInputEvent({type: 'keyDown', keyCode: 'F6'});
+    await until(() => shellJS('!document.querySelector(".titlebar").hidden && Boolean(document.activeElement.closest(".titlebar"))'), 'F6 reveals and focuses toolbar');
+    updateToolbarVisibility(pagePoint, 6000); updateToolbarVisibility(pagePoint, 10000);
+    assert.equal(uiState().toolbarVisible, true, 'keyboard focus keeps the toolbar visible');
+    win.webContents.sendInputEvent({type: 'keyDown', keyCode: 'Escape'});
+    await until(() => !uiState().toolbarVisible, 'Escape dismisses toolbar');
+    assert.equal(getWeb().getBounds().y, 0);
+    await perform('toolbar-auto-hide', false);
+    await until(() => shellJS('!document.querySelector(".titlebar").hidden'), 'disabling auto-hide restores toolbar');
+    assert.equal(getWeb().getBounds().y, 38);
+    assert.equal(new Store(dataDirectory).value.toolbarAutoHide, false);
+    record('toolbar auto-hide persists, expands the native webpage, reveals at the top, cancels on re-entry, and supports F6/Escape without hiding the app');
 
     await perform('edge-hide',false);
     hideWindow();

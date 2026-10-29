@@ -39,7 +39,7 @@ for (const target of [source,staging,backup]) {
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('应用更新路径超出发布目录');
 }
 fs.mkdirSync(staging,{recursive:true});
-for (const name of ['main.cjs','app-paths.cjs','core.cjs','reader.cjs','reader-shortcuts.cjs','reader-shortcuts.json','legado.cjs','legado-worker.cjs','legado-dom.cjs','legado-runtime.js','outside-click.cjs','media-control.cjs','native','preload.cjs','edge-preload.cjs','package.json','renderer-dist','web-scrollbars.css','ui','assets','READER.md','THIRD-PARTY-NOTICES.txt']) {
+for (const name of ['main.cjs','app-paths.cjs','core.cjs','reader.cjs','builtin-sources.json','reader-shortcuts.cjs','reader-shortcuts.json','legado.cjs','legado-worker.cjs','legado-dom.cjs','legado-runtime.js','outside-click.cjs','media-control.cjs','native','preload.cjs','edge-preload.cjs','package.json','renderer-dist','web-scrollbars.css','ui','assets','READER.md','THIRD-PARTY-NOTICES.txt']) {
   copyTree(path.join(project,name),path.join(staging,name));
 }
 const packageLock = JSON.parse(fs.readFileSync(path.join(project, 'package-lock.json'), 'utf8'));
@@ -58,19 +58,22 @@ fs.writeFileSync(path.join(output,'使用说明.txt'), [
   '整个文件夹一起移动，请勿单独移动 exe。',
   '新版首页含横向分类、快捷站点与继续上次浏览入口。顶部书本图标打开 TXT / EPUB 阅读器。',
   '应用只在系统托盘保留图标，不显示任务栏按钮。',
+  '“小窗设置”中可开启“自动隐藏顶部工具栏”：鼠标移到窗口顶部显示，移开后收起，网页占满窗口；F6 展开并聚焦，Esc 收起。',
   '网页链接、新窗口请求和书源验证统一在当前窗口打开，顶部工具栏可后退或返回阅读器。',
   '顶部“关闭网页”或 Ctrl+W 停止音视频并释放网页；阅读器保持打开，历史、收藏和登录状态保留。',
   '“收起时暂停媒体”开启时，隐藏、最小化或切换到其他面板立即静音并暂停各层网页播放器，返回网页后恢复。',
-  '设置中可开启“鼠标移出收进托盘”：离开窗口超过 100 像素，停留 2 秒后收起；在窗口外点击立即收起。',
+  '设置中可开启“鼠标移出收进托盘”：离开窗口超过 100 像素后默认等待 1 秒收起；延迟秒数可手动输入，支持小数，0 秒立即收起；在窗口外点击立即收起。',
   '回到窗口或 100 像素缓冲区取消计时。收起后移回不会打开，点击托盘图标恢复。',
   '拖动、缩放、应用菜单和文件选择框操作期间暂停自动收起。',
   '“启用侧边收起”默认关闭，只控制手动侧边收起，不影响鼠标移出收进托盘。',
   'Ctrl+Shift+Space 显示/隐藏；也可点击系统托盘恢复。',
   '书源支持 JS、共享 jsLib、JSONPath、动态模板和常用 java 接口；脚本在 QuickJS 沙箱运行。',
+  '默认内置并启用笔趣阁、番茄小说和玄幻文学，打开“找小说”即可搜索；升级会补齐缺少的书源，停用或移除的选择会保留。',
   '可在阅读器的“书源管理”导入本文件夹中的“中华典藏书源.json”，搜索古典小说与名著。',
   '支持 eReader 静态 source.ts、CSS / XPath、正则替换和 GBK 搜索。下拉框切换书源自动重新搜索。',
   '阅读页“切换书源”先确认目录和正文再续读；搜索遇到人机验证自动跳过。',
   '阅读页底部“滚动 / 翻页”切换阅读方式；左右翻页时点正文左侧上一页、右侧下一页。底部箭头切换上、下章。',
+  '滚动阅读会自动衔接相邻章节，向下读下一章、向上回看上一章，透明背景下同样支持；在线章节加载失败可点击重试。',
   '阅读页的返回书架、书名、章节名、换源、书签和阅读设置统一放在底部一行展示，窄窗口收紧间距并省略长标题。',
   '阅读设置支持透明背景：隐藏上下工具栏，只保留黑色正文。Ctrl+Shift+T 切换透明，Esc 或点击托盘恢复。',
   '阅读设置的“快捷键”页可修改翻页、换章、滚动及透明切换键，Ctrl+, 打开阅读设置。',

@@ -25,6 +25,8 @@ const sourceRuns = ref([]), searchedQuery = ref(''), switchingBook = shallowRef(
 const busy = ref(false), operation = ref(''), error = ref(''), scrollHost = ref(), removeTarget = ref(), removeDialog = ref();
 const epubLoading = ref(false);
 const textPage = ref(0), textPages = ref(1);
+const scrollChapters = shallowRef([]), continuationLoading = ref(0), continuationErrors = ref({});
+let chapterRevision = 0, continuationWorker;
 let textObserver, layoutFrame, layoutRevision = 0, pagePointer, readingAnchor;
 let openRevision = 0, searchRevision = 0, networkRevision = 0, progressTimer, settingsTimer, pendingProgress, ignoreScroll = false;
 const networkSearching = ref(false);
@@ -54,7 +56,7 @@ const filteredBooks = computed(() => {
 });
 const latestBook = computed(() => [...library.value.books].filter(b => b.lastRead).sort((a, b) => b.lastRead - a.lastRead)[0]);
 const visibleToc = computed(() => toc.value.map((entry, index) => ({...entry, index})).filter(entry => entry.title.toLocaleLowerCase().includes(tocQuery.value.toLocaleLowerCase())));
-const paragraphs = computed(() => (chapter.value?.text || '').split(/\n/).map(p => p.trim()).filter(Boolean));
+const visibleChapters = computed(() => paged.value ? (chapter.value ? [chapter.value] : []) : scrollChapters.value);
 const chapterTitle = computed(() => book.value?.type === 'epub'
   ? toc.value.find(entry => position.value.href && entry.href?.split('#')[0] === position.value.href.split('#')[0])?.title || book.value.title
   : toc.value[position.value.chapter]?.title || book.value?.title);
@@ -117,6 +119,7 @@ async function openBook(item) {
   const token = ++openRevision;
   await run('正在打开电子书…', async () => {
     drawer.value = ''; contentResults.value = []; contentQuery.value = ''; tocQuery.value = '';
+    resetContinuation(); scrollChapters.value = [];
     epubData.value = null; chapter.value = null; toc.value = [];
     const data = await request('open', {id: item.id});
     if (token !== openRevision) return;
@@ -131,49 +134,139 @@ async function openBook(item) {
     }
     if (token !== openRevision) return;
     toc.value = entries;
-    await displayChapter(Math.min(position.value.chapter || 0, Math.max(entries.length - 1, 0)), position.value.fraction || 0, token);
+    await displayChapter(Math.min(position.value.chapter || 0, Math.max(entries.length - 1, 0)), position.value.fraction || 0, position.value.scrollFraction);
   });
 }
-async function displayChapter(index, fraction = 0, token = openRevision) {
-  if (!book.value || !toc.value[index]) return;
-  const id = book.value.id;
+function resetContinuation() {
+  ++chapterRevision; continuationWorker = null; continuationLoading.value = 0; continuationErrors.value = {};
+  ++layoutRevision; cancelAnimationFrame(layoutFrame); ignoreScroll = false;
+}
+async function readChapter(index, token) {
+  const current = book.value, source = currentSource.value, entry = toc.value[index];
+  const id = current.id;
+  const valid = () => token === chapterRevision && book.value?.id === id && book.value?.storageId === current.storageId;
   let data = await request('chapter', {id, index});
+  if (!valid()) return;
   if (!data) {
-    const source = currentSource.value;
     if (!source || source.warning) throw new Error(source?.warning || '书源已删除，未缓存的章节无法读取');
-    data = await loadChapter(source, toc.value[index], value => request('fetch', value), book.value);
+    data = await loadChapter(source, entry, value => request('fetch', value), current);
+    if (!valid()) return;
     data = await request('chapter-save', {id, index, data});
   }
-  if (token !== openRevision || book.value?.id !== id) return;
+  if (valid()) return {...data, index, paragraphs: (data.text || '').split(/\n/).map(p => p.trim()).filter(Boolean)};
+}
+async function displayChapter(index, fraction = 0, scrollFraction) {
+  if (!book.value || !toc.value[index]) return;
+  resetContinuation();
+  const token = chapterRevision, data = await readChapter(index, token);
+  if (!data) return;
   ignoreScroll = true;
-  chapter.value = data;
-  position.value = {chapter: index, fraction, percent: (index + fraction) / Math.max(toc.value.length, 1) * 100};
+  chapter.value = data; scrollChapters.value = [data];
+  position.value = {chapter: index, fraction, scrollFraction, percent: (index + fraction) / Math.max(toc.value.length, 1) * 100};
   readingAnchor = null;
+  await nextTick();
+  // Restoring the last screen of a chapter may need the start of the next one.
+  const element = scrollHost.value, article = element?.querySelector('.text-reading');
+  if (!paged.value && scrollFraction > 0 && toc.value[index + 1] && article
+    && scrollFraction * article.offsetHeight > article.offsetHeight - element.clientHeight) {
+    try {
+      const next = await readChapter(index + 1, token);
+      if (next) scrollChapters.value = [data, next];
+    } catch (e) { if (token === chapterRevision) continuationErrors.value = {1: e.message}; }
+  }
+  if (token !== chapterRevision) return;
   await layoutText(fraction);
   scheduleProgress(position.value);
 }
-async function goChapter(index, fraction = 0) {
+async function goChapter(index, fraction = 0, scrollFraction) {
   if (!toc.value[index]) return;
   await run('正在加载章节…', async () => {
     await flushProgress();
     if (book.value.type === 'epub') await epub.value.display(toc.value[index]?.href);
-    else await displayChapter(index, fraction);
+    else await displayChapter(index, fraction, scrollFraction);
     drawer.value = '';
   });
 }
 async function backToShelf() {
   if (busy.value) return;
-  ++openRevision; ++searchRevision;
+  ++openRevision; ++searchRevision; resetContinuation();
   await flushProgress();
   page.value = 'shelf'; book.value = null; epubData.value = null; epubLoading.value = false; drawer.value = ''; error.value = ''; searching.value = false;
 }
 function onScroll() {
-  if (ignoreScroll || !scrollHost.value || !chapter.value || busy.value) return;
-  const element = scrollHost.value, maximum = element.scrollHeight - element.clientHeight;
-  if (paged.value) textPage.value = Math.min(textPages.value - 1, Math.max(0, Math.round(element.scrollLeft / pageStride())));
-  const fraction = paged.value ? textPage.value / Math.max(1, textPages.value - 1) : maximum > 1 ? Math.min(1, Math.max(0, element.scrollTop / maximum)) : 0;
-  scheduleProgress({chapter: position.value.chapter, fraction, percent: (position.value.chapter + fraction) / Math.max(1, toc.value.length) * 100});
+  if (ignoreScroll || !props.active || page.value !== 'reading' || !scrollHost.value?.clientHeight || !chapter.value || busy.value) return;
+  const element = scrollHost.value;
+  let index = position.value.chapter, fraction, scrollFraction;
+  if (paged.value) {
+    textPage.value = Math.min(textPages.value - 1, Math.max(0, Math.round(element.scrollLeft / pageStride())));
+    fraction = textPage.value / Math.max(1, textPages.value - 1);
+  } else {
+    const top = element.getBoundingClientRect().top;
+    const articles = [...element.querySelectorAll('.text-reading')];
+    const article = articles.find(a => a.getBoundingClientRect().bottom > top + 1) || articles.at(-1);
+    if (!article) return;
+    const rect = article.getBoundingClientRect(), offset = Math.max(0, top - rect.top);
+    index = Number(article.dataset.chapterIndex);
+    chapter.value = scrollChapters.value.find(item => item.index === index);
+    scrollFraction = Math.min(1, offset / Math.max(1, rect.height));
+    fraction = Math.min(1, offset / Math.max(1, rect.height - element.clientHeight));
+  }
+  scheduleProgress({chapter: index, fraction, scrollFraction, percent: (index + (index === toc.value.length - 1 ? fraction : scrollFraction ?? fraction)) / Math.max(1, toc.value.length) * 100});
   rememberAnchor();
+  void maintainContinuation();
+}
+async function replaceScrollChapters(items, token) {
+  const element = scrollHost.value, top = element.getBoundingClientRect().top;
+  const anchor = [...element.querySelectorAll('.text-reading')].find(a => a.getBoundingClientRect().bottom > top && items.some(item => item.index === Number(a.dataset.chapterIndex)));
+  const before = anchor?.getBoundingClientRect().top, layout = layoutRevision;
+  const errors = {...continuationErrors.value};
+  if (items[0].index !== scrollChapters.value[0].index) delete errors[-1];
+  if (items.at(-1).index !== scrollChapters.value.at(-1).index) delete errors[1];
+  continuationErrors.value = errors;
+  ignoreScroll = true; scrollChapters.value = items;
+  await nextTick();
+  if (token !== chapterRevision || element !== scrollHost.value) return;
+  if (anchor?.isConnected) element.scrollTop += anchor.getBoundingClientRect().top - before;
+  if (layout === layoutRevision) { ignoreScroll = false; onScroll(); }
+}
+async function maintainContinuation() {
+  if (continuationWorker || paged.value || ignoreScroll || busy.value || !props.active || page.value !== 'reading' || !scrollHost.value || !scrollChapters.value.length) return;
+  const worker = continuationWorker = {}, token = chapterRevision;
+  try {
+    while (token === chapterRevision && !paged.value && !ignoreScroll && !busy.value && props.active && page.value === 'reading' && scrollHost.value) {
+      const element = scrollHost.value, bounds = element.getBoundingClientRect(), height = element.clientHeight;
+      const articles = [...element.querySelectorAll('.text-reading')];
+      // Keep the visible passage and a few screens around it, even in very long books.
+      const retained = articles.filter(a => { const r = a.getBoundingClientRect(); return r.bottom >= bounds.top - height * 3 && r.top <= bounds.bottom + height * 3; });
+      if (retained.length && retained.length < articles.length) {
+        const indexes = new Set(retained.map(a => Number(a.dataset.chapterIndex)));
+        await replaceScrollChapters(scrollChapters.value.filter(item => indexes.has(item.index)), token);
+        continue;
+      }
+      const first = scrollChapters.value[0], last = scrollChapters.value.at(-1);
+      const direction = first.index > 0 && articles[0].getBoundingClientRect().top > bounds.top - height * 1.5 && !continuationErrors.value[-1] ? -1
+        : last.index < toc.value.length - 1 && articles.at(-1).getBoundingClientRect().bottom < bounds.bottom + height * 1.5 && !continuationErrors.value[1] ? 1 : 0;
+      if (!direction) break;
+      continuationLoading.value = direction;
+      try {
+        const data = await readChapter(direction < 0 ? first.index - 1 : last.index + 1, token);
+        if (!data || token !== chapterRevision || paged.value) break;
+        // Layout and pointer movement may have changed while an online chapter loaded.
+        while (ignoreScroll && token === chapterRevision) await new Promise(resolve => requestAnimationFrame(resolve));
+        if (token !== chapterRevision || !props.active || !scrollHost.value || page.value !== 'reading') break;
+        await replaceScrollChapters(direction < 0 ? [data, ...scrollChapters.value] : [...scrollChapters.value, data], token);
+      } catch (e) {
+        if (token === chapterRevision) continuationErrors.value = {...continuationErrors.value, [direction]: e.message || '章节加载失败'};
+      }
+      if (token === chapterRevision) continuationLoading.value = 0;
+    }
+  } finally {
+    if (continuationWorker === worker) { continuationWorker = null; continuationLoading.value = 0; }
+  }
+}
+function retryContinuation(direction) {
+  const errors = {...continuationErrors.value}; delete errors[direction]; continuationErrors.value = errors;
+  void maintainContinuation();
 }
 function pageStride() { return (scrollHost.value?.clientWidth || 0) + 40; }
 function rememberAnchor() {
@@ -186,7 +279,7 @@ function rememberAnchor() {
   if (range && range.startContainer.nodeType === Node.TEXT_NODE && element.contains(range.startContainer)) {
     const end = Math.min(range.startOffset + 1, range.startContainer.length);
     range.setEnd(range.startContainer, end);
-    readingAnchor = range;
+    readingAnchor = {range, offset: range.getBoundingClientRect().top - rect.top};
   }
 }
 async function layoutText(fraction = position.value.fraction || 0, anchor = null) {
@@ -199,7 +292,7 @@ async function layoutText(fraction = position.value.fraction || 0, anchor = null
   await new Promise(resolve => requestAnimationFrame(resolve));
   if (token !== layoutRevision || element !== scrollHost.value) return;
   const bounds = element.getBoundingClientRect();
-  const rect = anchor && element.contains(anchor.startContainer) ? anchor.getBoundingClientRect() : null;
+  const rect = anchor && element.contains(anchor.range.startContainer) ? anchor.range.getBoundingClientRect() : null;
   if (paged.value) {
     textPages.value = Math.max(1, Math.round((element.scrollWidth + 40) / pageStride()));
     const index = rect ? Math.floor((rect.left - bounds.left + element.scrollLeft + 1) / pageStride()) : Math.round(fraction * (textPages.value - 1));
@@ -207,7 +300,11 @@ async function layoutText(fraction = position.value.fraction || 0, anchor = null
     element.scrollLeft = textPage.value * pageStride(); element.scrollTop = 0;
   } else {
     textPage.value = 0; textPages.value = 1; element.scrollLeft = 0;
-    element.scrollTop = rect ? element.scrollTop + rect.top - bounds.top : fraction * Math.max(0, element.scrollHeight - element.clientHeight);
+    const article = element.querySelector(`[data-chapter-index="${position.value.chapter}"]`);
+    const height = article?.getBoundingClientRect().height || 0;
+    const top = article ? element.scrollTop + article.getBoundingClientRect().top - bounds.top : 0;
+    element.scrollTop = rect ? element.scrollTop + rect.top - bounds.top - anchor.offset : top + (Number.isFinite(position.value.scrollFraction)
+      ? position.value.scrollFraction * height : fraction * Math.max(0, height - element.clientHeight));
   }
   await new Promise(resolve => requestAnimationFrame(resolve));
   if (token !== layoutRevision) return;
@@ -245,13 +342,8 @@ async function turn(direction) {
     } else await goChapter(position.value.chapter + direction, direction < 0 ? 1 : 0);
     return;
   }
-  const end = target.scrollHeight - target.clientHeight;
-  if (direction > 0 && target.scrollTop < end - 2) target.scrollBy({top: target.clientHeight * 0.85, behavior: 'auto'});
-  else if (direction < 0 && target.scrollTop > 2) target.scrollBy({top: -target.clientHeight * 0.85, behavior: 'auto'});
-  else {
-    const index = position.value.chapter + direction;
-    if (index >= 0 && index < toc.value.length) await goChapter(index, direction < 0 ? 1 : 0);
-  }
+  target.scrollBy({top: direction * target.clientHeight * 0.85, behavior: 'auto'});
+  void maintainContinuation();
 }
 function markKey() { return book.value?.type === 'epub' ? position.value.cfi || '' : `${position.value.chapter}:${Math.floor(position.value.fraction * 100)}`; }
 async function toggleMark() {
@@ -264,10 +356,15 @@ async function toggleMark() {
 async function jumpMark(mark) {
   if (book.value.type === 'epub') {
     try { await epub.value.display(mark.cfi); drawer.value = ''; } catch (e) { error.value = e.message; }
-  } else await goChapter(mark.chapter, mark.fraction);
+  } else await goChapter(mark.chapter, mark.fraction, mark.scrollFraction);
 }
 function changeSetting(name, value) {
   const anchor = readingAnchor;
+  if (name === 'readingMode') {
+    resetContinuation();
+    // Keep the current article keyed across modes so its text range survives reflow.
+    if (chapter.value) scrollChapters.value = [chapter.value];
+  }
   const previousTheme = name === 'theme' && value === 'transparent' && preferences.value.theme !== 'transparent' ? preferences.value.theme : preferences.value.previousTheme;
   library.value.preferences = {...preferences.value, previousTheme, [name]: value};
   if (name === 'theme' && value === 'transparent') { drawer.value = ''; document.activeElement?.blur(); }
@@ -429,6 +526,7 @@ function cancelSwitch() {
 async function useSource(result) {
   if (!switchingBook.value || !isSameBook(result)) return;
   await run('正在检查新书源目录和正文…', async () => {
+    resetContinuation();
     const previous = switchingBook.value, source = sources.value.find(source => source.id === result.sourceId);
     if (!source || source.warning) throw new Error('新书源规则不兼容');
     const entries = await loadToc(source, result.url, value => request('fetch', value), result);
@@ -442,7 +540,7 @@ async function useSource(result) {
       sourceId: source.id, url: result.url, entries, index, chapter: loaded});
     updateBook(response.book); toc.value = response.toc; position.value = response.book.progress;
     switchingBook.value = null; page.value = 'reading'; contentResults.value = [];
-    await displayChapter(index, response.book.progress.fraction);
+    await displayChapter(index, response.book.progress.fraction, response.book.progress.scrollFraction);
     emit('toast', matched ? `已切换到${source.name}，接着本章阅读` : `已切换到${source.name}；章节名称不同，已定位到第 ${index + 1} 项，请核对目录`);
   });
 }
@@ -455,11 +553,12 @@ async function addNovel(result) {
 const onShelf = result => library.value.books.some(b => b.type === 'online' && b.sourceId === result.sourceId && b.url === result.url);
 async function refreshToc() {
   await run('正在更新目录…', async () => {
+    resetContinuation();
     if (!currentSource.value || currentSource.value.warning) throw new Error('请重新导入兼容的书源');
     const entries = await loadToc(currentSource.value, book.value.url, value => request('fetch', value), book.value);
     toc.value = await request('toc-save', {id: book.value.id, entries});
     const data = await request('open', {id: book.value.id}); updateBook(data.book);
-    await displayChapter(data.book.progress.chapter, data.book.progress.fraction);
+    await displayChapter(data.book.progress.chapter, data.book.progress.fraction, data.book.progress.scrollFraction);
     emit('toast', `目录已更新，共 ${toc.value.length} 章`);
   });
 }
@@ -503,6 +602,7 @@ function keydown(event) {
   if (event.key === 'PageUp') { event.preventDefault(); void turn(-1); }
 }
 watch(() => props.active, active => { if (!active) { void flushProgress(); ++searchRevision; searching.value = false; } });
+watch([busy, () => props.active, page], () => { if (!busy.value && props.active && page.value === 'reading') { onScroll(); void maintainContinuation(); } }, {flush: 'post'});
 watch(transparentReading, async (active, old) => {
   document.documentElement.dataset.readerTransparent = String(active);
   if (old === undefined && !active) return;
@@ -517,7 +617,14 @@ watch(transparentReading, async (active, old) => {
 watch([drawer, settingsTab, () => props.active], () => { if (drawer.value !== 'settings' || settingsTab.value !== 'shortcuts' || !props.active) cancelCapture(); });
 watch(scrollHost, element => {
   textObserver?.disconnect();
-  if (element) { textObserver = new ResizeObserver(queueTextLayout); textObserver.observe(element); }
+  if (element) {
+    let width = element.clientWidth, height = element.clientHeight;
+    textObserver = new ResizeObserver(() => {
+      if (width === element.clientWidth && height === element.clientHeight) return;
+      width = element.clientWidth; height = element.clientHeight; queueTextLayout();
+    });
+    textObserver.observe(element);
+  }
   else { ++layoutRevision; cancelAnimationFrame(layoutFrame); readingAnchor = null; }
 });
 watch(novelQuery, () => {
@@ -532,7 +639,7 @@ watch(drawer, async (value, old) => {
 });
 function visibility() { if (document.hidden) void flushProgress(); }
 onMounted(() => { void refresh().catch(e => { error.value = e.message; }); document.addEventListener('keydown', keydown, true); document.addEventListener('visibilitychange', visibility); unsubscribeRecovery = window.moyu?.onReaderRecovery?.(exitTransparent); });
-onUnmounted(() => { if (networkSearching.value) cancelNovelSearch(); cancelCapture(); unsubscribeRecovery?.(); document.documentElement.dataset.readerTransparent = 'false'; if (transparentReading.value) void request('presentation', {transparent: false}).catch(() => {}); ++openRevision; ++searchRevision; ++networkRevision; ++layoutRevision; textObserver?.disconnect(); cancelAnimationFrame(layoutFrame); void flushProgress(); clearTimeout(settingsTimer); document.removeEventListener('keydown', keydown, true); document.removeEventListener('visibilitychange', visibility); });
+onUnmounted(() => { if (networkSearching.value) cancelNovelSearch(); resetContinuation(); cancelCapture(); unsubscribeRecovery?.(); document.documentElement.dataset.readerTransparent = 'false'; if (transparentReading.value) void request('presentation', {transparent: false}).catch(() => {}); ++openRevision; ++searchRevision; ++networkRevision; ++layoutRevision; textObserver?.disconnect(); cancelAnimationFrame(layoutFrame); void flushProgress(); clearTimeout(settingsTimer); document.removeEventListener('keydown', keydown, true); document.removeEventListener('visibilitychange', visibility); });
 </script>
 
 <template>
@@ -560,11 +667,11 @@ onUnmounted(() => { if (networkSearching.value) cancelNovelSearch(); cancelCaptu
             <button class="book-remove icon-button" :aria-label="`移除《${item.title}》`" title="从书架移除" :disabled="busy" @click="confirmRemove(item)"><AppIcon name="trash" /></button>
           </article>
         </div>
-        <div v-else class="reader-empty"><AppIcon name="book" /><h2>{{ library.books.length ? '没有找到这本书' : '你的下一段故事，从这里开始' }}</h2><p>{{ library.books.length ? '换个书名，或试试其他分类。' : '导入 TXT、EPUB，或添加自己的小说书源。' }}</p><button v-if="!library.books.length" class="reader-primary" :disabled="busy" @click="importBooks">导入第一本书<AppIcon name="arrow" /></button></div>
+        <div v-else class="reader-empty"><AppIcon name="book" /><h2>{{ library.books.length ? '没有找到这本书' : '你的下一段故事，从这里开始' }}</h2><p>{{ library.books.length ? '换个书名，或试试其他分类。' : '导入 TXT、EPUB，或到「找小说」直接搜索。' }}</p><button v-if="!library.books.length" class="reader-primary" :disabled="busy" @click="importBooks">导入第一本书<AppIcon name="arrow" /></button></div>
         <footer class="library-footnote">本地书籍离线阅读 · 自动记住阅读位置 · 单本最高 50 MB</footer>
       </template>
       <template v-if="page === 'sources'">
-        <div class="source-intro"><h2>故事来自你选择的地方。</h2><p>导入书源 JSON 文件、订阅链接或 Yiove 列表页，再到「找小说」搜索。</p><button class="reader-secondary" :disabled="busy" @click="importSources(false)"><AppIcon name="upload" />导入 JSON 文件</button></div>
+        <div class="source-intro"><h2>故事来自你选择的地方。</h2><p>默认提供笔趣阁、番茄小说和玄幻文学，到「找小说」即可搜索。也可导入其他书源 JSON 文件、订阅链接或 Yiove 列表页。</p><button class="reader-secondary" :disabled="busy" @click="importSources(false)"><AppIcon name="upload" />导入 JSON 文件</button></div>
         <form class="source-import" @submit.prevent="importSources(true)"><label for="source-url">书源 JSON 链接</label><div><input id="source-url" v-model="sourceUrl" type="url" placeholder="https://…/sources.json" required /><button class="reader-primary" :disabled="busy" type="submit">导入链接</button></div></form>
         <p class="reader-note">支持阅读 3.0 的 CSS、XPath、JSONPath、JavaScript、共享脚本库和动态模板，也支持 eReader JSON / 静态 source.ts 与 Moyu JSON。需要人机验证的书源会自动跳过。</p>
         <template v-if="sources.length">
@@ -578,7 +685,7 @@ onUnmounted(() => { if (networkSearching.value) cancelNovelSearch(); cancelCaptu
       <template v-if="page === 'discover'">
         <div v-if="switchingBook" class="switch-notice"><div><strong>为《{{ switchingBook.title }}》切换书源</strong><p>当前：{{ switchingBook.sourceName }} · {{ switchingBook.author || '作者未记录，请核对候选书籍' }}</p><p>新书源的目录与正文加载成功后才会切换，优先按章节名称续读。</p></div><button class="reader-secondary" :disabled="busy && !networkSearching" @click="cancelSwitch">返回阅读</button></div>
         <form class="novel-search" @submit.prevent="findNovels()"><label for="novel-query">{{ switchingBook ? '搜索同一本书' : '想读什么故事？' }}</label><div><input id="novel-query" v-model="novelQuery" placeholder="输入书名或作者" :readonly="Boolean(switchingBook)" required /><button class="reader-primary" :disabled="busy && !networkSearching" type="submit"><AppIcon name="search" />{{ networkSearching ? '重新搜索' : '搜索' }}</button></div><label class="source-select-label" for="search-source">搜索书源 · 切换后自动搜索</label><UiSelect id="search-source" :model-value="selectedSource" label="搜索书源" :disabled="busy && !networkSearching" :options="searchSourceOptions" @update:model-value="selectedSource = $event; changeSearchSource()" /></form>
-        <div v-if="!availableSources.length" class="reader-empty compact-empty"><AppIcon name="layers" /><h2>先添一个书源</h2><p>支持从本地 JSON 文件或链接导入。</p><button class="reader-secondary" @click="page = 'sources'">管理书源<AppIcon name="arrow" /></button></div>
+        <div v-if="!availableSources.length" class="reader-empty compact-empty"><AppIcon name="layers" /><h2>暂无启用的书源</h2><p>到书源管理启用已有书源，或从本地文件、链接导入。</p><button class="reader-secondary" @click="page = 'sources'">管理书源<AppIcon name="arrow" /></button></div>
         <section v-if="sourceRuns.length" class="source-run-list" aria-label="各书源搜索状态"><p class="reader-note" role="status">“{{ searchedQuery }}” · {{ novelResults.length }} 个结果 · {{ sourceRuns.filter(row => !['pending','loading'].includes(row.status)).length }} / {{ sourceRuns.length }} 个书源已完成</p><article v-for="row in sourceRuns" :key="row.id" :data-status="row.status"><div><strong>{{ row.name }}</strong><p>{{ row.message }}</p></div><div class="source-run-actions"><button v-if="['error','empty','canceled'].includes(row.status)" class="reader-secondary" :disabled="busy" @click="findNovels(row.id)">重试</button><button v-if="row.status === 'error'" class="reader-secondary" :disabled="busy" @click="openSource(row)">打开网站</button></div></article></section>
         <div v-if="novelResults.length" class="novel-results"><article v-for="result in novelResults" :key="result.sourceId + result.url"><span class="novel-symbol"><AppIcon name="book" /></span><div><h3>{{ result.title }}</h3><p>{{ result.author || '作者未知' }}<span> · {{ result.sourceName }}</span></p><small v-if="switchingBook && !isSameBook(result)">书名或作者不一致</small></div><button v-if="switchingBook" class="reader-secondary" :disabled="busy || !isSameBook(result)" @click="useSource(result)">使用此书源</button><button v-else class="reader-secondary" :disabled="busy || onShelf(result)" @click="addNovel(result)">{{ onShelf(result) ? '已在书架' : '加入书架' }}</button></article></div>
         <p v-else-if="!busy && searchedQuery && sourceRuns.length" class="reader-note">这次没有可显示的书籍。上方列出了每个书源的原因，可重试或切换其他书源。</p>
@@ -593,9 +700,10 @@ onUnmounted(() => { if (networkSearching.value) cancelNovelSearch(); cancelCaptu
         <EpubPane v-if="book.type === 'epub' && epubData" ref="epub" :data="epubData" :preferences="preferences" :active="active" @toc="entries => toc = entries" @progress="scheduleProgress" @metadata="updateMetadata" @ready="epubLoading = false" @error="message => { error = message; epubLoading = false; }" @key="keydown" @turn="turn" />
         <div v-else class="text-reading-layout" :class="{'is-paged': paged}">
           <div ref="scrollHost" class="text-reading-scroll" tabindex="0" aria-label="小说正文" :aria-describedby="paged ? 'reader-page-hint' : undefined" @scroll.passive="onScroll" @pointerdown="startPageClick" @click="pageClick">
-            <article v-if="chapter" class="text-reading"><p class="chapter-kicker">{{ book.type === 'txt' ? '本地 · TXT' : book.sourceName }}<span>{{ position.chapter + 1 }} / {{ toc.length }}</span></p><h1>{{ chapter.title }}</h1><p v-for="(paragraph, index) in paragraphs" :key="index">{{ paragraph }}</p></article>
-            <div v-else-if="!busy" class="reader-empty"><h2>这一章还没有加载</h2><p>请检查网络和书源，或从目录选择其他章节。</p><button class="reader-secondary" @click="goChapter(position.chapter || 0)">重新加载</button></div>
+            <article v-for="item in visibleChapters" :key="item.index" class="text-reading" :data-chapter-index="item.index"><p class="chapter-kicker">{{ book.type === 'txt' ? '本地 · TXT' : book.sourceName }}<span>{{ item.index + 1 }} / {{ toc.length }}</span></p><h1>{{ item.title }}</h1><p v-for="(paragraph, index) in item.paragraphs" :key="index">{{ paragraph }}</p></article>
+            <div v-if="!chapter && !busy" class="reader-empty"><h2>这一章还没有加载</h2><p>请检查网络和书源，或从目录选择其他章节。</p><button class="reader-secondary" @click="goChapter(position.chapter || 0)">重新加载</button></div>
           </div>
+          <template v-if="!paged"><div v-for="direction in [-1, 1]" v-show="continuationLoading === direction || continuationErrors[direction]" :key="direction" class="reading-continuation" :class="{'is-previous': direction < 0}" role="status"><span>{{ continuationErrors[direction] ? `${direction < 0 ? '上一章' : '下一章'}加载失败：${continuationErrors[direction]}` : `正在加载${direction < 0 ? '上一章' : '下一章'}…` }}</span><button v-if="continuationErrors[direction]" class="reader-secondary" @click="retryContinuation(direction)">重试</button></div></template>
           <span v-if="paged" id="reader-page-hint" class="reader-sr-only">点击正文左侧上一页，右侧下一页，也可使用左右方向键。</span>
         </div>
       </div>

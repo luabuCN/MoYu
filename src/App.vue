@@ -11,9 +11,11 @@ import {useMoyu} from './composables/useMoyu.js';
 
 const {state, toast, action, showToast, bridge} = useMoyu();
 const home = ref();
+const toolbar = ref();
 const clearDialog = ref();
 const cancelClear = ref();
 let unsubscribeFocus;
+let unsubscribeToolbar;
 
 const showPanel = panel => action('panel', panel);
 async function openUrl(url) {
@@ -35,19 +37,23 @@ watch(() => state.value.panel, async panel => {
 });
 
 onMounted(() => {
+  unsubscribeToolbar = bridge?.onFocusToolbar?.(async () => {
+    await nextTick();
+    toolbar.value?.focus();
+  });
   unsubscribeFocus = bridge?.onFocusAddress(async () => {
     await showPanel('home');
     await nextTick();
     await home.value?.focusAddress(state.value.url);
   });
 });
-onUnmounted(() => unsubscribeFocus?.());
+onUnmounted(() => { unsubscribeFocus?.(); unsubscribeToolbar?.(); });
 </script>
 
 <template>
   <IconDefs />
-  <TitleBar :state="state" @action="action" @panel="showPanel" />
-  <main id="workspace">
+  <TitleBar ref="toolbar" :state="state" @action="action" @panel="showPanel" />
+  <main id="workspace" :style="{top: state.toolbarVisible ? '38px' : '0px'}">
     <HomeView ref="home" :state="state" :hidden="state.panel !== 'home'" @navigate="openUrl" @panel="showPanel" />
     <section id="web-panel" class="panel web-panel" :hidden="state.panel !== 'web'" aria-label="网页内容">
       <div id="web-message" class="web-message" :hidden="!state.error"><AppIcon name="globe" /><h1>暂时没有连接上</h1><p id="web-error">{{ state.error }}</p>
